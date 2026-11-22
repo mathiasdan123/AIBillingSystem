@@ -9,6 +9,10 @@ interface User {
   profileImageUrl?: string | null;
   role?: 'admin' | 'billing' | 'therapist';
   practiceId?: number;
+  // True for the TherapyBill AI platform operator (allowlisted by email,
+  // see server/services/platformAdmin.ts), not a practice's own admin.
+  // Gates platform-level UI, e.g. marking a BAA record as platform-wide.
+  isPlatformAdmin?: boolean;
   // True when the user is authenticated but has not yet enabled MFA.
   // Set by GET /api/auth/user (server/routes/auth.ts). Used to gate access
   // to PHI routes — the server-side mfaSetupRequired middleware also

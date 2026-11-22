@@ -9,7 +9,7 @@
 
 import { Router } from 'express';
 import { isAuthenticated } from '../replitAuth';
-import { getRevenueAtRiskSummary } from '../services/revenueAtRiskService';
+import { getRevenueAtRiskSummary, QUEUE_VIEWS, type QueueView } from '../services/revenueAtRiskService';
 import logger from '../services/logger';
 
 const router = Router();
@@ -39,7 +39,11 @@ const getAuthorizedPracticeId = (req: any): number => {
 router.get('/summary', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const summary = await getRevenueAtRiskSummary(practiceId);
+    // ?queue=open|snoozed|completed selects the action-queue slice; anything
+    // else (or nothing) is the open queue.
+    const requested = String(req.query.queue ?? 'open');
+    const queue: QueueView = (QUEUE_VIEWS as string[]).includes(requested) ? (requested as QueueView) : 'open';
+    const summary = await getRevenueAtRiskSummary(practiceId, { queue });
     res.json(summary);
   } catch (error) {
     logger.error('Error fetching revenue-at-risk summary', {

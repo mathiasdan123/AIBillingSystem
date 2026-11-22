@@ -26,6 +26,8 @@ export interface SoapDraftPayload {
   location?: string | null;
   sessionType?: string | null;
   sessionId?: number | null;
+  /** Suggested billing for the drafted note — see lib/soapDraftBilling.ts. */
+  billing?: unknown;
 }
 
 export interface RestoredDraft extends SoapDraftPayload {

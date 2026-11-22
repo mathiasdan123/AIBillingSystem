@@ -187,7 +187,6 @@ export default function SessionRecorder() {
           lastName: newPatientData.lastName.trim(),
           phone: newPatientData.phone.trim() || null,
           email: newPatientData.email.trim() || null,
-          dateOfBirth: "2000-01-01",
           practiceId,
         });
         const newPatient = await res.json();

@@ -315,10 +315,15 @@ router.post('/patient-portal/intake/setup-intent', async (req, res) => {
     let stripeCustomerId = patient.stripeCustomerId;
 
     if (!stripeCustomerId) {
-      // Create Stripe customer for this patient
+      // Create Stripe customer for this patient. Stripe confirmed (support,
+      // 2026-10) that name/email aren't required to tokenize or process a
+      // payment method - so the Customer's name is a neutral internal
+      // reference, not the patient's actual name, to limit what PHI reaches
+      // Stripe given no BAA is offered for Payments/Billing/Elements. Email
+      // is kept since Stripe needs it to deliver receipts.
       const customer = await stripeService.createCustomer(
         patient.email || `patient-${patient.id}@noemail.local`,
-        `${patient.firstName} ${patient.lastName}`,
+        `Patient #${patient.id}`,
         { patientId: patient.id.toString(), practiceId: patient.practiceId.toString() }
       );
       stripeCustomerId = customer.id;

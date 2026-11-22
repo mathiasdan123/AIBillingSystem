@@ -1,6 +1,7 @@
 import nodemailer from 'nodemailer';
 import type { Claim, Patient, ReimbursementOptimization } from '@shared/schema';
 import logger from './services/logger';
+import { createEmailTransporter, isEmailTransportConfigured } from './services/emailTransportFactory';
 
 // Email configuration from environment variables
 const emailConfig = {
@@ -20,13 +21,13 @@ let transporter: ReturnType<typeof nodemailer.createTransport> | null = null;
 
 function getTransporter(): ReturnType<typeof nodemailer.createTransport> {
   if (!transporter) {
-    transporter = nodemailer.createTransport(emailConfig);
+    transporter = createEmailTransporter(emailConfig);
   }
   return transporter;
 }
 
 export function isEmailConfigured(): boolean {
-  return !!(process.env.SMTP_USER && process.env.SMTP_PASS);
+  return isEmailTransportConfigured();
 }
 
 export interface DeniedClaimReportData {

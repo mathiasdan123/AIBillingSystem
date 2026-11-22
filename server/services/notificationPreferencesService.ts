@@ -7,9 +7,75 @@
  */
 
 import { db } from '../db';
-import { eq, and } from 'drizzle-orm';
-import { notificationPreferences } from '@shared/schema';
+import { eq, and, sql } from 'drizzle-orm';
+import { notificationPreferences, patients, practices } from '@shared/schema';
+import { storage } from '../storage';
 import logger from './logger';
+
+export interface OutboundEmailBlock {
+  blocked: boolean;
+  /** 'suppressed' = hard bounce / complaint; 'demo-practice' = seeded fake patient. */
+  reason?: 'suppressed' | 'demo-practice';
+}
+
+/**
+ * Read-only check used by the transport-level guard in
+ * emailTransportFactory.ts before ANY email leaves the app. Returns
+ * blocked=true when the address belongs to:
+ *   - a patient or staff user whose notification_preferences row has
+ *     emailEnabled=false (set by the user, or by suppressEmailForAddress
+ *     after an SES hard bounce / complaint), or
+ *   - a patient of the isolated demo practice (practices.isDemo). Demo
+ *     isolation is practice-level by design (see services/demoPractice.ts),
+ *     so the patient row itself is NOT flagged - the practice is.
+ *
+ * Deliberately does not call getPatientPreferences/getStaffPreferences:
+ * those create a default row when none exists, and a send-path check must
+ * never write. No prefs row means "not suppressed".
+ */
+export async function getOutboundEmailBlock(email: string): Promise<OutboundEmailBlock> {
+  const normalizedEmail = (email ?? '').trim().toLowerCase();
+  if (!normalizedEmail) return { blocked: false };
+
+  type PatientEmailRow = {
+    id: number;
+    practiceId: number | null;
+    practiceIsDemo: boolean | null;
+    emailEnabled: boolean | null;
+  };
+  const matchedPatients: PatientEmailRow[] = await db
+    .select({
+      id: patients.id,
+      practiceId: patients.practiceId,
+      practiceIsDemo: practices.isDemo,
+      emailEnabled: notificationPreferences.emailEnabled,
+    })
+    .from(patients)
+    .leftJoin(practices, eq(practices.id, patients.practiceId))
+    .leftJoin(notificationPreferences, eq(notificationPreferences.patientId, patients.id))
+    .where(sql`lower(${patients.email}) = ${normalizedEmail}`);
+
+  if (matchedPatients.some((p) => p.emailEnabled === false)) {
+    return { blocked: true, reason: 'suppressed' };
+  }
+  if (matchedPatients.some((p) => p.practiceIsDemo === true)) {
+    return { blocked: true, reason: 'demo-practice' };
+  }
+
+  const matchedUser = await storage.getUserByEmail(normalizedEmail);
+  if (matchedUser) {
+    const [staffPrefs] = await db
+      .select({ emailEnabled: notificationPreferences.emailEnabled })
+      .from(notificationPreferences)
+      .where(eq(notificationPreferences.userId, matchedUser.id))
+      .limit(1);
+    if (staffPrefs?.emailEnabled === false) {
+      return { blocked: true, reason: 'suppressed' };
+    }
+  }
+
+  return { blocked: false };
+}
 
 export type NotificationType =
   | 'appointmentReminders'
@@ -198,6 +264,58 @@ export async function updatePreferences(
     .returning();
 
   return updated;
+}
+
+/**
+ * Suppress future email notifications for every patient/staff record
+ * matching the given address - called from the SES bounce/complaint
+ * webhook (server/routes/sesNotifications.ts). Reuses the existing
+ * emailEnabled preference flag that sendEmailWithPreferenceCheck already
+ * honors, rather than adding a new table: a hard bounce or a spam
+ * complaint means "stop emailing this address," which is exactly what
+ * emailEnabled=false already means everywhere else in the app.
+ *
+ * An address can match more than one patient record (e.g. a parent's
+ * email shared across siblings' accounts), so every match is suppressed,
+ * not just the first.
+ */
+export async function suppressEmailForAddress(
+  email: string,
+  reason: 'bounce' | 'complaint',
+): Promise<{ patientsSuppressed: number; staffSuppressed: number }> {
+  const normalizedEmail = email.trim().toLowerCase();
+
+  const matchedPatients = await db
+    .select({ id: patients.id, practiceId: patients.practiceId })
+    .from(patients)
+    .where(sql`lower(${patients.email}) = ${normalizedEmail}`);
+
+  let patientsSuppressed = 0;
+  for (const patient of matchedPatients) {
+    const prefs = await getPatientPreferences(patient.id, patient.practiceId);
+    if (prefs.emailEnabled) {
+      await updatePreferences(prefs.id, { emailEnabled: false });
+      patientsSuppressed++;
+    }
+  }
+
+  let staffSuppressed = 0;
+  const matchedUser = await storage.getUserByEmail(normalizedEmail);
+  if (matchedUser?.practiceId) {
+    const prefs = await getStaffPreferences(matchedUser.id, matchedUser.practiceId);
+    if (prefs.emailEnabled) {
+      await updatePreferences(prefs.id, { emailEnabled: false });
+      staffSuppressed = 1;
+    }
+  }
+
+  logger.warn('Email notifications suppressed due to bounce/complaint', {
+    reason,
+    patientsSuppressed,
+    staffSuppressed,
+  });
+
+  return { patientsSuppressed, staffSuppressed };
 }
 
 /**

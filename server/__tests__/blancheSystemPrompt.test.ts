@@ -51,6 +51,12 @@ describe('buildSystemPrompt', () => {
     });
   });
 
+  it('tells Blanche not to enumerate internal tool or function names (QA demo pass 2026-11-19)', () => {
+    const prompt = buildSystemPrompt({ asString: true }) as string;
+    expect(prompt).toMatch(/Never name or list your internal tools or function identifiers/);
+    expect(prompt).toContain('Describe what you can do in plain language');
+  });
+
   it('injects an admin-specific opener for role=admin', () => {
     const prompt = buildSystemPrompt({ asString: true,  role: 'admin' });
     expect(prompt).toMatch(/## User Context/);

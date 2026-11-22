@@ -1,7 +1,25 @@
 /**
  * AI Appeal Generator Service
  * Automatically analyzes denied claims and generates appeal letters
+ *
+ * GROUNDING (QA sweep 2026-11-18): the template used to assert, for every
+ * denial, that services were medically necessary and AOTA-conformant, that a
+ * comprehensive evaluation and a measurable treatment plan existed, that
+ * progress notes demonstrated skilled intervention, and -- for authorization
+ * denials -- that the service was urgent and a retro-authorization request
+ * was being submitted. None of that was looked up or asked for. Every
+ * argument and paragraph is now conditional on an AppealGrounding: a record
+ * that exists, or a fact the biller entered. See appealGroundingService.ts.
  */
+
+import {
+  type AppealGrounding,
+  emptyAppealGrounding,
+  filterUnsupportedKeyArguments,
+  stripUnsupportedAppealAssertions,
+} from './services/appealGroundingService';
+import { formatDateOnlyShort } from './utils/dateOnly';
+import logger from './services/logger';
 
 export interface AppealResult {
   appealLetter: string;
@@ -40,23 +58,59 @@ interface PracticeData {
   npi: string | null;
   address: string | null;
   phone: string | null;
+  /** Who signs the letter. Left blank, the signature block carries a bracketed placeholder the readiness check flags. */
+  providerName?: string | null;
 }
+
+/**
+ * A key argument the letter may make, and what has to be on record for it.
+ * `requires` is a predicate over the grounding; an argument with no
+ * requirement states a position about the claim itself (coding, timing,
+ * eligibility), not the existence of a document.
+ */
+interface KeyArgument {
+  text: string | ((g: AppealGrounding) => string);
+  requires?: (g: AppealGrounding) => boolean;
+}
+
+const needsClinicalDocs = (g: AppealGrounding) => g.hasClinicalDocumentation;
+const needsProgressNotes = (g: AppealGrounding) => g.hasProgressNotes;
+const needsPriorAuth = (g: AppealGrounding) => g.hasPriorAuthorization;
+const needsUrgent = (g: AppealGrounding) => g.inputs.urgentService === true;
+const needsRetroAuth = (g: AppealGrounding) => g.inputs.retroAuthRequested === true;
+
+const AUTH_ARGUMENTS: KeyArgument[] = [
+  {
+    text: (g) => `Authorization was on file for this patient (reference ${g.authorizationNumbers.join(', ')})`,
+    requires: needsPriorAuth,
+  },
+  {
+    text: 'The service was urgent and could not wait for prior authorization, as documented by the treating provider',
+    requires: needsUrgent,
+  },
+  {
+    text: (g) =>
+      g.inputs.retroAuthReference
+        ? `A retroactive authorization request has been submitted (reference ${g.inputs.retroAuthReference})`
+        : 'A retroactive authorization request has been submitted',
+    requires: needsRetroAuth,
+  },
+];
 
 // Common denial reason patterns and their handling strategies
 const DENIAL_PATTERNS: Record<string, {
   category: string;
   successRate: number;
-  keyArguments: string[];
+  keyArguments: KeyArgument[];
   suggestedActions: string[];
 }> = {
   'medical necessity': {
     category: 'medical_necessity',
     successRate: 65,
     keyArguments: [
-      'Treatment aligns with established AOTA practice guidelines for occupational therapy',
-      'Documented functional deficits require skilled therapeutic intervention',
-      'Patient demonstrated measurable progress toward functional goals',
-      'Services were provided at the appropriate level of care'
+      { text: 'The clinical documentation on file describes the functional deficits the billed services addressed', requires: needsClinicalDocs },
+      { text: (g) => `Progress notes on file (${g.progressNoteCount}) record the patient's response to treatment`, requires: needsProgressNotes },
+      { text: 'The billed codes describe the services rendered, as recorded by the treating provider' },
     ],
     suggestedActions: [
       'Include detailed functional outcome measures',
@@ -69,9 +123,9 @@ const DENIAL_PATTERNS: Record<string, {
     category: 'coverage',
     successRate: 45,
     keyArguments: [
-      'Service is a covered benefit under the patient\'s plan',
-      'CPT code accurately reflects the skilled service provided',
-      'Treatment falls within scope of occupational therapy practice'
+      { text: 'Service is a covered benefit under the patient\'s plan' },
+      { text: 'CPT code accurately reflects the skilled service provided' },
+      { text: 'Treatment falls within scope of occupational therapy practice' },
     ],
     suggestedActions: [
       'Verify patient benefits and coverage details',
@@ -82,11 +136,7 @@ const DENIAL_PATTERNS: Record<string, {
   'authorization': {
     category: 'auth_missing',
     successRate: 55,
-    keyArguments: [
-      'Authorization was obtained prior to service (if applicable)',
-      'Services were emergent/urgent and required immediate intervention',
-      'Retroactive authorization request is being submitted'
-    ],
+    keyArguments: AUTH_ARGUMENTS,
     suggestedActions: [
       'Submit retroactive authorization request',
       'Document clinical urgency of services',
@@ -96,11 +146,7 @@ const DENIAL_PATTERNS: Record<string, {
   'prior auth': {
     category: 'auth_missing',
     successRate: 55,
-    keyArguments: [
-      'Authorization was obtained prior to service (if applicable)',
-      'Services were emergent/urgent and required immediate intervention',
-      'Retroactive authorization request is being submitted'
-    ],
+    keyArguments: AUTH_ARGUMENTS,
     suggestedActions: [
       'Submit retroactive authorization request',
       'Document clinical urgency of services',
@@ -111,9 +157,9 @@ const DENIAL_PATTERNS: Record<string, {
     category: 'coding_error',
     successRate: 70,
     keyArguments: [
-      'Corrected claim with accurate coding is attached',
-      'CPT and ICD-10 codes now properly reflect services rendered',
-      'Documentation supports medical necessity for billed codes'
+      { text: 'A corrected claim with accurate coding accompanies this appeal' },
+      { text: 'CPT and ICD-10 codes now properly reflect services rendered' },
+      { text: 'The clinical documentation on file supports the billed codes', requires: needsClinicalDocs },
     ],
     suggestedActions: [
       'Review and correct CPT/ICD-10 codes',
@@ -125,9 +171,9 @@ const DENIAL_PATTERNS: Record<string, {
     category: 'duplicate_claim',
     successRate: 40,
     keyArguments: [
-      'This is not a duplicate claim - services were distinct',
-      'Different dates of service or different procedures',
-      'Original claim was not paid - this is the valid submission'
+      { text: 'This is not a duplicate claim - services were distinct' },
+      { text: 'Different dates of service or different procedures' },
+      { text: 'Original claim was not paid - this is the valid submission' },
     ],
     suggestedActions: [
       'Provide documentation showing distinct services',
@@ -139,9 +185,9 @@ const DENIAL_PATTERNS: Record<string, {
     category: 'timely_filing',
     successRate: 35,
     keyArguments: [
-      'Claim was submitted within required timeframe',
-      'Delay was due to circumstances beyond provider control',
-      'Proof of timely submission is attached'
+      { text: 'Claim was submitted within required timeframe' },
+      { text: 'Delay was due to circumstances beyond provider control' },
+      { text: 'Proof of timely submission is attached' },
     ],
     suggestedActions: [
       'Gather proof of original submission date',
@@ -153,9 +199,9 @@ const DENIAL_PATTERNS: Record<string, {
     category: 'eligibility',
     successRate: 30,
     keyArguments: [
-      'Patient was eligible on date of service',
-      'Eligibility verification was performed prior to service',
-      'Patient\'s coverage was retroactively activated'
+      { text: 'Patient was eligible on date of service' },
+      { text: 'Eligibility verification was performed prior to service' },
+      { text: 'Patient\'s coverage was retroactively activated' },
     ],
     suggestedActions: [
       'Verify patient eligibility for date of service',
@@ -167,9 +213,9 @@ const DENIAL_PATTERNS: Record<string, {
     category: 'bundling',
     successRate: 50,
     keyArguments: [
-      'Services are distinct and separately identifiable',
-      'Modifier 59 or XE/XP/XS/XU appropriately applied',
-      'Documentation supports separate therapeutic goals'
+      { text: 'Services are distinct and separately identifiable' },
+      { text: 'Modifier 59 or XE/XP/XS/XU appropriately applied' },
+      { text: 'The clinical documentation on file supports separate therapeutic goals', requires: needsClinicalDocs },
     ],
     suggestedActions: [
       'Add appropriate modifier if not already present',
@@ -178,6 +224,32 @@ const DENIAL_PATTERNS: Record<string, {
     ]
   }
 };
+
+const DEFAULT_PATTERN: typeof DENIAL_PATTERNS[string] = {
+  category: 'other',
+  successRate: 50,
+  keyArguments: [
+    { text: 'The clinical documentation on file describes the services rendered and the deficits they addressed', requires: needsClinicalDocs },
+    { text: 'Request for reconsideration based on the enclosed records', requires: (g) => g.hasClinicalDocumentation || g.hasSupportingDocs },
+    { text: 'The billed codes describe the services rendered, as recorded by the treating provider' },
+  ],
+  suggestedActions: [
+    'Review denial reason carefully',
+    'Gather all supporting documentation',
+    'Contact payer for clarification if needed'
+  ]
+};
+
+/** Resolve a pattern's arguments against the grounding: unsupported ones are dropped. */
+function resolveKeyArguments(pattern: typeof DENIAL_PATTERNS[string], g: AppealGrounding): string[] {
+  const out: string[] = [];
+  for (const arg of pattern.keyArguments) {
+    if (arg.requires && !arg.requires(g)) continue;
+    out.push(typeof arg.text === 'function' ? arg.text(g) : arg.text);
+  }
+  if (g.inputs.additionalGrounds) out.push(g.inputs.additionalGrounds);
+  return out;
+}
 
 export class AiAppealGenerator {
   /**
@@ -189,12 +261,13 @@ export class AiAppealGenerator {
     patient: PatientData,
     practice: PracticeData,
     soapNote?: string | null,
-    appealLevel?: string
+    appealLevel?: string,
+    grounding: AppealGrounding = emptyAppealGrounding(),
   ): Promise<AppealResult> {
     try {
       const { generateClaudeAppeal, isClaudeAppealAvailable } = await import('./services/claudeAppealService');
       if (isClaudeAppealAvailable()) {
-        return await generateClaudeAppeal({
+        const result = await generateClaudeAppeal({
           claim,
           lineItems,
           patient,
@@ -203,12 +276,18 @@ export class AiAppealGenerator {
           denialReason: claim.denialReason || 'No reason provided',
           appealLevel,
         });
+        // The model is told to ground its arguments; the backstop enforces it.
+        return {
+          ...result,
+          appealLetter: stripUnsupportedAppealAssertions(result.appealLetter, grounding),
+          keyArguments: filterUnsupportedKeyArguments(result.keyArguments, grounding),
+        };
       }
     } catch (error: any) {
-      console.warn('Claude appeal generation failed, falling back to template:', error.message);
+      logger.warn('Claude appeal generation failed, falling back to template', { error: error?.message });
     }
 
-    return this.generateAppeal(claim, lineItems, patient, practice);
+    return this.generateAppeal(claim, lineItems, patient, practice, grounding);
   }
 
   /**
@@ -218,20 +297,20 @@ export class AiAppealGenerator {
     claim: ClaimData,
     lineItems: LineItemData[],
     patient: PatientData,
-    practice: PracticeData
+    practice: PracticeData,
+    grounding: AppealGrounding = emptyAppealGrounding(),
   ): Promise<AppealResult> {
     const denialReason = claim.denialReason?.toLowerCase() || '';
 
     // Find matching denial pattern
     const matchedPattern = this.matchDenialPattern(denialReason);
+    const keyArguments = resolveKeyArguments(matchedPattern, grounding);
 
-    // Generate the appeal letter
-    const appealLetter = this.generateAppealLetter(
-      claim,
-      lineItems,
-      patient,
-      practice,
-      matchedPattern
+    // Generate the appeal letter, then run the same backstop the model path
+    // gets -- the template is written to be grounded, the backstop proves it.
+    const appealLetter = stripUnsupportedAppealAssertions(
+      this.generateAppealLetter(claim, lineItems, patient, practice, keyArguments, grounding),
+      grounding,
     );
 
     return {
@@ -239,7 +318,7 @@ export class AiAppealGenerator {
       denialCategory: matchedPattern.category,
       successProbability: matchedPattern.successRate,
       suggestedActions: matchedPattern.suggestedActions,
-      keyArguments: matchedPattern.keyArguments,
+      keyArguments: filterUnsupportedKeyArguments(keyArguments, grounding),
       generatedAt: new Date(),
     };
   }
@@ -254,22 +333,7 @@ export class AiAppealGenerator {
         return pattern;
       }
     }
-
-    // Default pattern for unknown denials
-    return {
-      category: 'other',
-      successRate: 50,
-      keyArguments: [
-        'Services rendered were medically necessary and appropriate',
-        'Documentation supports the clinical need for treatment',
-        'Request for reconsideration based on attached clinical records'
-      ],
-      suggestedActions: [
-        'Review denial reason carefully',
-        'Gather all supporting documentation',
-        'Contact payer for clarification if needed'
-      ]
-    };
+    return DEFAULT_PATTERN;
   }
 
   /**
@@ -280,7 +344,8 @@ export class AiAppealGenerator {
     lineItems: LineItemData[],
     patient: PatientData,
     practice: PracticeData,
-    pattern: typeof DENIAL_PATTERNS[string]
+    keyArguments: string[],
+    g: AppealGrounding,
   ): string {
     const today = new Date().toLocaleDateString('en-US', {
       year: 'numeric',
@@ -289,7 +354,7 @@ export class AiAppealGenerator {
     });
 
     const dateOfService = claim.submittedAt
-      ? new Date(claim.submittedAt).toLocaleDateString('en-US')
+      ? formatDateOnlyShort(claim.submittedAt, 'See attached documentation')
       : 'See attached documentation';
 
     // Build CPT codes list
@@ -306,9 +371,55 @@ export class AiAppealGenerator {
       .join('\n    ');
 
     // Build key arguments section
-    const argumentsSection = pattern.keyArguments
-      .map((arg, i) => `${i + 1}. ${arg}`)
-      .join('\n');
+    const argumentsSection = keyArguments.length > 0
+      ? keyArguments.map((arg, i) => `${i + 1}. ${arg}`).join('\n')
+      : 'The treating provider requests reconsideration of this claim on review of the enclosed records.';
+
+    // Clinical justification: one sentence per record that actually exists.
+    // Nothing here describes what a record SAYS -- only that it is on file
+    // and enclosed. The reviewer reads the records; this letter does not
+    // characterise them.
+    const justification: string[] = [];
+    if (g.hasEvaluation) justification.push('An evaluation of the patient is on file and enclosed.');
+    if (g.hasTreatmentPlan) justification.push('The patient\'s current treatment plan is on file and enclosed.');
+    if (g.hasProgressNotes) {
+      justification.push(`Progress notes (${g.progressNoteCount}) covering the course of treatment are on file and enclosed.`);
+    }
+    if (g.hasSoapNotes) {
+      justification.push(`Session documentation (${g.soapNoteCount} note${g.soapNoteCount === 1 ? '' : 's'}) is on file and enclosed.`);
+    }
+    if (g.hasPriorAuthorization) {
+      justification.push(`Authorization reference on file: ${g.authorizationNumbers.join(', ')}.`);
+    }
+    if (g.inputs.urgentService) {
+      justification.push('The treating provider has indicated that the service was urgent and could not be deferred pending prior authorization.');
+    }
+    if (g.inputs.retroAuthRequested) {
+      justification.push(
+        g.inputs.retroAuthReference
+          ? `A retroactive authorization request has been submitted to the plan (reference ${g.inputs.retroAuthReference}).`
+          : 'A retroactive authorization request has been submitted to the plan.',
+      );
+    }
+    const justificationSection = justification.length > 0
+      ? `CLINICAL DOCUMENTATION:\n\n${justification.join(' ')}\n\n`
+      : '';
+
+    // Enclosures: only what exists.
+    const enclosures = ['Copy of original claim'];
+    if (g.hasEvaluation) enclosures.push('Evaluation');
+    if (g.hasTreatmentPlan) enclosures.push('Treatment plan');
+    if (g.hasProgressNotes) enclosures.push('Progress notes');
+    if (g.hasSoapNotes) enclosures.push('Session documentation');
+    for (const name of g.supportingDocNames) enclosures.push(name);
+
+    const requestSentence = g.hasClinicalDocumentation || g.hasSupportingDocs
+      ? 'On the grounds stated above and the enclosed records, I respectfully request that you reconsider this claim for payment.'
+      : 'On the grounds stated above, I respectfully request that you reconsider this claim for payment.';
+
+    const signer = practice.providerName && practice.providerName.trim().length > 0
+      ? practice.providerName.trim()
+      : '[Provider Name]';
 
     const letter = `
 ${practice.name}
@@ -324,7 +435,7 @@ ${patient.insuranceProvider || '[Insurance Company]'}
 
 RE: APPEAL OF DENIED CLAIM
     Patient Name: ${patient.firstName} ${patient.lastName}
-    Patient DOB: ${patient.dateOfBirth ? new Date(patient.dateOfBirth).toLocaleDateString('en-US') : 'On file'}
+    Patient DOB: ${formatDateOnlyShort(patient.dateOfBirth, 'On file')}
     Member ID: ${patient.insuranceId || 'On file'}
     Claim Number: ${claim.claimNumber || 'See attached'}
     Date of Service: ${dateOfService}
@@ -345,15 +456,9 @@ GROUNDS FOR APPEAL:
 
 ${argumentsSection}
 
-CLINICAL JUSTIFICATION:
+${justificationSection}REQUEST FOR RECONSIDERATION:
 
-The occupational therapy services provided were medically necessary to address the patient's functional limitations and improve their ability to perform activities of daily living. Treatment was provided in accordance with the American Occupational Therapy Association (AOTA) practice guidelines and was appropriate for the patient's diagnosis and functional status.
-
-The patient's treatment plan was developed based on a comprehensive evaluation and targeted specific, measurable goals. Progress notes document the patient's response to treatment and demonstrate skilled therapeutic intervention was required to achieve functional outcomes.
-
-REQUEST FOR RECONSIDERATION:
-
-Based on the clinical documentation and the grounds stated above, I respectfully request that you reconsider this claim for payment. All supporting documentation, including evaluation notes, treatment records, and progress notes, are available upon request.
+${requestSentence}
 
 If you require any additional information or clarification, please do not hesitate to contact our office.
 
@@ -363,16 +468,13 @@ Sincerely,
 
 
 _______________________________
-Provider Name
+${signer}
 ${practice.name}
 NPI: ${practice.npi || '[NPI]'}
 Phone: ${practice.phone || '[Phone]'}
 
 Enclosures:
-- Copy of original claim
-- Clinical documentation
-- Progress notes
-- Treatment plan
+${enclosures.map((e) => `- ${e}`).join('\n')}
 `.trim();
 
     return letter;

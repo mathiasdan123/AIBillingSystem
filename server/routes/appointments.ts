@@ -17,13 +17,25 @@ import { validate } from '../middleware/validate';
 import { createAppointmentSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
 import logger from '../services/logger';
-import { chargeCopay, isStripeConfigured, createPatientPaymentLink, practiceMayCollectPatientPayments } from '../services/stripeService';
+import { chargeCopay, isStripeConfigured, createPatientPaymentLink, practiceMayCollectPatientPayments, neutralAppointmentPaymentDescription } from '../services/stripeService';
 import { getBusinessTimeZone, zonedDateString } from '../utils/timezone';
 import { zonedTimeString } from '../utils/dateOnly';
 
 const router = Router();
 
 // Helper to get authorized practiceId from request
+/** True only when the patient exists and is archived; any lookup failure reads as not archived. */
+async function isArchivedPatient(patientId: unknown): Promise<boolean> {
+  const id = Number(patientId);
+  if (!Number.isInteger(id) || id <= 0) return false;
+  try {
+    const patient: any = await storage.getPatient(id);
+    return !!patient?.archivedAt;
+  } catch {
+    return false;
+  }
+}
+
 const getAuthorizedPracticeId = (req: any): number => {
   if (req.authorizedPracticeId) {
     return req.authorizedPracticeId;
@@ -107,6 +119,13 @@ router.post('/', isAuthenticated, async (req: any, res) => {
     // practice's appointments into practice 1 (a real billing entity, and the
     // wrong PHI custodian). Same rule as patients.ts.
     appointmentData.practiceId = getAuthorizedPracticeId(req);
+
+    // An archived patient takes no new appointments (QA 2026-11-18). Looked
+    // up defensively: a missing patient is left to the FK / later checks as
+    // before, only an archived one is refused here.
+    if (await isArchivedPatient(appointmentData.patientId)) {
+      return res.status(400).json({ message: 'This patient is archived. Unarchive the patient before scheduling.' });
+    }
 
     // Convert date strings to Date objects
     appointmentData.startTime = new Date(appointmentData.startTime);
@@ -309,7 +328,10 @@ router.use('/:id', isAuthenticated, async (req: any, res: Response, next: NextFu
   try {
     const appt = await storage.getAppointment(id);
     if (!appt) return res.status(404).json({ message: 'Appointment not found' });
-    if (req.userRole !== 'admin') {
+    // Tenant check for everyone except the platform admin. Every practice's
+    // own admin has role 'admin', so a role check here is not a tenant check
+    // (same rule as the patients and claims guards).
+    if (!req.isPlatformAdmin) {
       const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
       if (!userPracticeId || appt.practiceId !== userPracticeId) {
         logger.warn('Unauthorized appointment access attempt', {
@@ -479,7 +501,7 @@ router.post('/:id/self-pay-invoice', isAuthenticated, async (req: any, res) => {
       : '';
     const description = typeof req.body?.description === 'string' && req.body.description.trim()
       ? req.body.description.trim()
-      : `${(appt as any).title || 'Therapy session'}${startTimeIso ? ` — ${startTimeIso}` : ''}`;
+      : neutralAppointmentPaymentDescription(appt.id, startTimeIso || undefined);
     if (!practiceMayCollectPatientPayments(appt.practiceId!)) {
       return res.status(409).json({
         error:
@@ -703,10 +725,15 @@ router.get('/:id/copay-info', isAuthenticated, async (req: any, res) => {
     const existingExpected = (appointment as any).copayExpected as string | null;
     const existingCollected = (appointment as any).copayCollected as string | null;
 
-    // Telehealth appointments have no front-desk copay collection.
-    // (Derived: telehealth appointments typically have locationId null or a
-    // matching telehealthSessions row. For this slice we use locationId.)
-    const isTelehealth = appointment.locationId == null;
+    // Telehealth appointments have no front-desk copay collection. Telehealth
+    // is a FACT about the appointment — a telehealth_sessions row exists for
+    // it — not an inference from a missing location: the New Appointment
+    // dialog's location is optional, so most in-person appointments at a
+    // single-site practice have no locationId. Deriving from that labelled
+    // an ordinary "Individual Therapy" check-in as Telehealth and hid the
+    // copay charge controls for it (QA sweep 2026-11-18).
+    const telehealthSession = await storage.getTelehealthSessionByAppointment(appointmentId);
+    const isTelehealth = !!telehealthSession;
 
     let expectedCents: number | null = null;
     let source: 'eligibility' | 'cache' | 'none' | 'recorded' | 'patient' = 'none';
@@ -1192,7 +1219,8 @@ router.use('/series/:seriesId', isAuthenticated, async (req: any, res: Response,
     if (series.length === 0) {
       return res.status(404).json({ message: 'Series not found' });
     }
-    if (req.userRole !== 'admin') {
+    // Tenant check for everyone except the platform admin (see the /:id guard).
+    if (!req.isPlatformAdmin) {
       const userPracticeId = req.userPracticeId ?? req.user?.practiceId;
       if (!userPracticeId || series.some((a: any) => a.practiceId !== userPracticeId)) {
         logger.warn('Unauthorized appointment-series access attempt', {

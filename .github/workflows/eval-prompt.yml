@@ -1,0 +1,86 @@
+name: SOAP Generation Fabrication Eval
+
+# Live-model regression check for scripts/eval-soap-generation.ts. Guards
+# against the fabrication pattern that resurfaced across #421-#425 despite
+# each prompt fix explicitly naming the prior one: every other automated
+# check tests the PROMPT we send, never the OUTPUT the model actually
+# returns. This calls the real Anthropic API against a fixed set of
+# adversarial scenarios (a brand-new patient with no history, blank optional
+# fields) and asserts the raw output -- deterministically for known-bad
+# strings, and via a second real-model call (the semantic judge) that must
+# quote the exact offending sentence, so a reworded defect still fails.
+#
+# Runs on PRs that touch the generation prompt OR provider/model routing
+# (path filter below), weekly regardless of code changes (schedule, below),
+# or on demand (workflow_dispatch). Requires the ANTHROPIC_API_KEY secret --
+# unlike the Stedi test-mode e2e step in ci.yml (which self-skips cleanly
+# with no key, since it tests nothing security-sensitive), this is a release
+# gate: without the key, eval-soap-generation.ts now FAILS loudly rather than
+# skipping, because a gate that can pass without ever running isn't a gate.
+# Add the secret in repo Settings -> Secrets and variables -> Actions, then
+# add this workflow's check to the main branch's required status checks in
+# Settings -> Branches, to make this an actual merge-blocking gate rather
+# than an informational run.
+#
+# Makes real, billed API calls (10 samples per scenario by default, plus one
+# judge call per sample) — that's why this is its own path-filtered workflow
+# rather than part of every push in ci.yml.
+#
+# WHY A WEEKLY SCHEDULE, NOT JUST A PATH FILTER: a path filter only fires
+# when THIS repo's code changes -- it cannot catch Anthropic silently
+# deprecating or changing the behavior of a model this code already calls.
+# That's not hypothetical: while scoping this workflow, aiSoapBillingService.ts's
+# hardcoded `claude-sonnet-4-5` turned out to already be deprecated
+# (retiring 2026-11-30), discovered by accident, not by any trigger here.
+# A scheduled run surfaces exactly that class of drift on its own, without
+# anyone needing to touch the repo first.
+
+on:
+  pull_request:
+    branches: [main]
+    # Opt-in like eval-prompt-pipeline.yml, but on its OWN label
+    # (`raw-eval`), so re-running the required gate on a PR does not also pay
+    # for this diagnostic harness every time. Before 2026-11-04 this fired
+    # on every push to a prompt PR, which doubled the cost of every attempt
+    # at the required gate (three rounds on #450 ran this harness three
+    # times, ~$5 each, with nothing new to learn from it). `labeled` is in
+    # the list so adding the label starts a run; a path filter is NOT used
+    # because a required-check context that never gets a run stays
+    # "Expected" forever (see eval-prompt-pipeline.yml).
+    types: [opened, reopened, labeled, synchronize]
+  schedule:
+    # Wednesdays 07:00 UTC -- a different day than ci.yml's Monday Stedi
+    # job, so scheduled AI-cost workflows don't all land on the same day.
+    - cron: '0 7 * * 3'
+  workflow_dispatch:
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'raw-eval')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run SOAP generation fabrication eval against the live model
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npm run eval:soap-generation
+
+      - name: Upload eval results for replay
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-soap-generation-results
+          path: .eval-results/
+          if-no-files-found: ignore
+          include-hidden-files: true

@@ -1367,6 +1367,11 @@ export default function Settings() {
   // MFA state
   const [mfaSetupData, setMfaSetupData] = useState<{ uri: string; backupCodes: string[] } | null>(null);
   const [mfaToken, setMfaToken] = useState('');
+  // Disabling MFA requires re-authentication (password or a current
+  // authenticator code); the server refuses a bare POST with 401.
+  const [mfaDisableOpen, setMfaDisableOpen] = useState(false);
+  const [mfaDisablePassword, setMfaDisablePassword] = useState('');
+  const [mfaDisableToken, setMfaDisableToken] = useState('');
 
   const mfaSetupMutation = useMutation({
     mutationFn: async () => {
@@ -1399,14 +1404,27 @@ export default function Settings() {
   });
 
   const mfaDisableMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (body: { password?: string; token?: string }) => {
       const headers = await getAuthHeaders();
-      const res = await fetch('/api/mfa/disable', { method: 'POST', headers: { ...headers } });
-      if (!res.ok) throw new Error('Failed');
+      const res = await fetch('/api/mfa/disable', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err?.message || 'Failed to disable MFA');
+      }
       return res.json();
     },
-    onSuccess: () => toast({ title: 'MFA Disabled', description: 'Two-factor authentication has been removed.' }),
-    onError: () => toast({ title: 'Error', description: 'Failed to disable MFA', variant: 'destructive' }),
+    onSuccess: () => {
+      setMfaDisableOpen(false);
+      setMfaDisablePassword('');
+      setMfaDisableToken('');
+      queryClient.invalidateQueries({ queryKey: ['/api/auth/user'] });
+      toast({ title: 'MFA Disabled', description: 'Two-factor authentication has been removed. Re-enroll before accessing patient data.' });
+    },
+    onError: (e: any) => toast({ title: 'Could not disable MFA', description: e?.message || 'Failed to disable MFA', variant: 'destructive' }),
   });
 
   // BAA queries
@@ -1416,7 +1434,8 @@ export default function Settings() {
     retry: false,
   });
 
-  const [newBaa, setNewBaa] = useState({ vendorName: '', vendorType: 'cloud_provider', signedDate: '', expirationDate: '' });
+  const DEFAULT_NEW_BAA = { vendorName: '', vendorType: 'cloud_provider', signedDate: '', expirationDate: '', isPlatformWide: false };
+  const [newBaa, setNewBaa] = useState(DEFAULT_NEW_BAA);
 
   const createBaaMutation = useMutation({
     mutationFn: async (data: typeof newBaa) => {
@@ -1425,10 +1444,22 @@ export default function Settings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['/api/baa'] });
-      setNewBaa({ vendorName: '', vendorType: 'cloud_provider', signedDate: '', expirationDate: '' });
+      setNewBaa(DEFAULT_NEW_BAA);
       toast({ title: 'BAA Created', description: 'Business Associate Agreement recorded.' });
     },
     onError: () => toast({ title: 'Error', description: 'Failed to create BAA record', variant: 'destructive' }),
+  });
+
+  const updateBaaMutation = useMutation({
+    mutationFn: async ({ id, isPlatformWide }: { id: number; isPlatformWide: boolean }) => {
+      const response = await apiRequest('PATCH', `/api/baa/${id}`, { isPlatformWide });
+      return response.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['/api/baa'] });
+      toast({ title: 'Updated', description: 'BAA record updated.' });
+    },
+    onError: () => toast({ title: 'Error', description: 'Failed to update BAA record', variant: 'destructive' }),
   });
 
   const deleteBaaMutation = useMutation({
@@ -2353,16 +2384,69 @@ export default function Settings() {
                         </div>
                       </div>
                     ) : (user as any)?.mfaEnabled ? (
-                      <div className="flex items-center gap-3">
-                        <Badge className="bg-green-100 text-green-800">MFA Enabled</Badge>
-                        <Button
-                          variant="destructive"
-                          size="sm"
-                          onClick={() => mfaDisableMutation.mutate()}
-                          disabled={mfaDisableMutation.isPending}
-                        >
-                          {mfaDisableMutation.isPending ? 'Disabling...' : 'Disable MFA'}
-                        </Button>
+                      <div className="space-y-3">
+                        <div className="flex items-center gap-3">
+                          <Badge className="bg-green-100 text-green-800">MFA Enabled</Badge>
+                          {!mfaDisableOpen && (
+                            <Button
+                              variant="destructive"
+                              size="sm"
+                              onClick={() => setMfaDisableOpen(true)}
+                              data-testid="mfa-disable-open"
+                            >
+                              Disable MFA
+                            </Button>
+                          )}
+                        </div>
+                        {mfaDisableOpen && (
+                          <div className="space-y-2 p-4 border rounded-lg max-w-md" data-testid="mfa-disable-reauth">
+                            <p className="text-sm">
+                              Confirm it's you: enter your password or a current authenticator code.
+                              Disabling MFA blocks patient-data access until you enroll again.
+                            </p>
+                            <Input
+                              type="password"
+                              autoComplete="current-password"
+                              placeholder="Password"
+                              value={mfaDisablePassword}
+                              onChange={(e) => setMfaDisablePassword(e.target.value)}
+                            />
+                            <Input
+                              value={mfaDisableToken}
+                              onChange={(e) => setMfaDisableToken(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                              placeholder="Authenticator code (if no password)"
+                              maxLength={6}
+                              className="font-mono"
+                              inputMode="numeric"
+                            />
+                            <div className="flex gap-2">
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() =>
+                                  mfaDisableMutation.mutate({
+                                    password: mfaDisablePassword || undefined,
+                                    token: mfaDisableToken || undefined,
+                                  })
+                                }
+                                disabled={(!mfaDisablePassword && mfaDisableToken.length !== 6) || mfaDisableMutation.isPending}
+                              >
+                                {mfaDisableMutation.isPending ? 'Disabling...' : 'Confirm and disable'}
+                              </Button>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  setMfaDisableOpen(false);
+                                  setMfaDisablePassword('');
+                                  setMfaDisableToken('');
+                                }}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <Button
@@ -2710,6 +2794,18 @@ export default function Settings() {
                       <Input type="date" value={newBaa.expirationDate} onChange={(e) => setNewBaa({ ...newBaa, expirationDate: e.target.value })} />
                     </div>
                   </div>
+                  {user?.isPlatformAdmin && (
+                    <div className="flex items-center gap-2 mb-4">
+                      <Switch
+                        checked={newBaa.isPlatformWide}
+                        onCheckedChange={(checked) => setNewBaa({ ...newBaa, isPlatformWide: checked })}
+                        id="baa-platform-wide"
+                      />
+                      <Label htmlFor="baa-platform-wide" className="cursor-pointer">
+                        Platform-wide (TherapyBill AI&apos;s own BAA with this vendor — e.g. AWS, Google Workspace. Visible on every practice&apos;s tracker, not just this one.)
+                      </Label>
+                    </div>
+                  )}
                   <Button
                     onClick={() => createBaaMutation.mutate(newBaa)}
                     disabled={!newBaa.vendorName || !newBaa.signedDate || !newBaa.expirationDate || createBaaMutation.isPending}
@@ -2733,13 +2829,28 @@ export default function Settings() {
                       {baaRecords.map((baa: any) => (
                         <div key={baa.id} className="flex items-center justify-between p-3 border rounded-lg">
                           <div>
-                            <p className="font-medium">{baa.vendorName}</p>
+                            <p className="font-medium flex items-center gap-2">
+                              {baa.vendorName}
+                              {baa.isPlatformWide && (
+                                <Badge variant="outline" className="text-xs">Platform-wide</Badge>
+                              )}
+                            </p>
                             <p className="text-xs text-muted-foreground">
                               {baa.vendorType} | Signed: {baa.signedDate} | Expires: {baa.expirationDate}
                             </p>
                           </div>
                           <div className="flex items-center gap-2">
                             <Badge variant={baa.status === 'active' ? 'default' : 'destructive'}>{baa.status}</Badge>
+                            {user?.isPlatformAdmin && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => updateBaaMutation.mutate({ id: baa.id, isPlatformWide: !baa.isPlatformWide })}
+                                disabled={updateBaaMutation.isPending}
+                              >
+                                {baa.isPlatformWide ? 'Unmark platform-wide' : 'Mark platform-wide'}
+                              </Button>
+                            )}
                             <AlertDialog>
                               <AlertDialogTrigger asChild>
                                 <Button

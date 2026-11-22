@@ -26,7 +26,7 @@ import {
 import * as stripeService from '../services/stripeService';
 import { db } from '../db';
 import { decryptField } from '../services/phiEncryptionService';
-import { getRedisClient, isRedisReady } from '../services/redisClient';
+import { getRedisClient, isRedisConfigured } from '../services/redisClient';
 import { zonedInstant, zonedDateString, getBusinessTimeZone } from '../utils/timezone';
 import {
   claims,
@@ -271,6 +271,20 @@ export function summarizeProposal(toolName: string, args: Record<string, any>): 
  * 2026-05-18. Redis fixes it.
  *
  * Falls back to in-memory Map when Redis isn't configured (local dev, tests).
+ *
+ * 2026-10-25: this recurred even with REDIS_URL configured. createProposal
+ * and takeProposal each independently gated on isRedisReady(), which flips
+ * false on any transient Redis 'error'/'close' event (a single dropped
+ * connection ioredis's own retry recovers from), not just a real outage —
+ * so a proposal created while Redis read "ready" could be looked up a
+ * minute later during a brief reconnect blip, read "not ready", and get
+ * checked against the (empty, this-process-only) in-memory Map instead of
+ * ever touching Redis, where it actually still was. Switched both sites to
+ * isRedisConfigured() (is there a client at all, independent of live
+ * connection state) — ioredis queues commands through a reconnect by
+ * default, so an attempt here either succeeds once reconnected or throws
+ * into the existing catch-and-fall-back, instead of skipping Redis on a
+ * stale readiness flag.
  */
 interface StoredProposal {
   id: string;
@@ -308,7 +322,7 @@ async function createProposal(opts: Omit<StoredProposal, 'id' | 'createdAt' | 's
     createdAt: Date.now(),
   };
   try {
-    if (isRedisReady()) {
+    if (isRedisConfigured()) {
       const redis = getRedisClient()!;
       await redis.set(
         PROPOSAL_REDIS_PREFIX + id,
@@ -329,7 +343,7 @@ async function createProposal(opts: Omit<StoredProposal, 'id' | 'createdAt' | 's
 
 async function takeProposal(id: string): Promise<StoredProposal | null> {
   try {
-    if (isRedisReady()) {
+    if (isRedisConfigured()) {
       const redis = getRedisClient()!;
       // Use GETDEL when available (Redis 6.2+) for atomicity; fall back to
       // GET then DEL on older Redis. A double-confirm race window of <1ms is
@@ -856,7 +870,7 @@ You receive a page path and title. Nothing else. You do not know what columns a 
 So: NEVER write step-by-step click instructions that describe interface elements you were not explicitly told exist. If you are drafting a numbered list and find yourself writing "you should see", "columns like", "if available", "should open", or "look for the button that says" — you are guessing at an interface, and guessing is how a user ends up clicking through a screen that cannot do what you promised. Stop and do one of these instead:
 
 1. **Do it for them.** If a tool performs the task, CALL THE TOOL. This is almost always the right answer and it is the single most common mistake to avoid: writing a tutorial for something you could simply have done. A user asking "how do I add a CPT code to this claim" is asking you to add the CPT code.
-2. **Send them to the page** with navigate_user or an [Action: ...] link, and say what the page is for — not what is on it.
+2. **Send them to the page** with navigate_user or an [Action: ...] link, and say what the page is for — not what is on it. Phrase it as something the user clicks ("here's a link to Settings"), never as something already done ("I've sent you to Settings" or "you're there now") — navigate_user produces a button below your message; it does not move the user's browser by itself.
 3. **Say you can't see it.** "I can't see your screen, so I don't want to guess at the buttons — but I can do this for you directly, or point you to the right page." That is a genuinely good answer. An honest "I don't know the layout" beats a confident fabrication every time.
 
 Specifically for CPT codes on a claim: the reliable path is the add_claim_line_item tool on a draft claim (call list_cpt_codes first to resolve the code to its id — never guess the id). Do not talk users through adding codes via the New Claim dialog or the claim detail view.
@@ -975,6 +989,7 @@ Guidelines:
 - When discussing specific billing codes, always include the code number AND description.
 - If you're unsure about a payer-specific rule, say so and recommend verifying with the payer.
 - When you have access to practice data through function calls, use it to give specific, data-driven answers.
+- Never name or list your internal tools or function identifiers (names like get_dashboard_stats, submit_claim, search_patients) to the user, including when asked "what can you do", "what tools do you have" or "how do you do that". Describe what you can do in plain language ("check a patient's eligibility", "draft an appeal letter", "find overdue claims") and offer to do it. The function names are an implementation detail; a user who sees them cannot act on them and they read as jargon.
 - For HIPAA compliance, refer to patients by first name only in responses.
 - If asked about something outside your expertise, be honest about limitations.
 - When suggesting actions, format them as clear next steps the user can take.
@@ -1611,11 +1626,11 @@ const assistantTools: Anthropic.Tool[] = [
   },
   {
     name: 'report_issue',
-    description: 'File a support ticket when the user reports a bug, glitch, error message, or something in TherapyBill not working as expected — or asks how to report a problem. Capture their description faithfully (their words, plus the error text if they shared one). Use severity "urgent" only when the user cannot work at all (cannot log in, notes will not save, money numbers look wrong); otherwise "normal", or "low" for polish/requests. After filing, tell the user their ticket number and that the team was notified. Do NOT use this for how-do-I questions you can answer yourself.',
+    description: 'File a support ticket when the user reports a bug, glitch, error message, or something in TherapyBill not working as expected — or asks how to report a problem — OR when one of YOUR OWN tool calls just failed with an error. Capture the problem faithfully: the user\'s words plus any exact error text they shared, OR, if you are filing this because your own tool call failed, the COMPLETE error string that tool call returned, copied verbatim and in full — do not summarize, paraphrase, or cut it short with "...". A truncated error is useless to the team debugging it later; the full text, however long or technical-looking, is what makes the ticket diagnosable. Use severity "urgent" only when the user cannot work at all (cannot log in, notes will not save, money numbers look wrong); otherwise "normal", or "low" for polish/requests. After filing, tell the user their ticket number and that the team was notified. Do NOT use this for how-do-I questions you can answer yourself.',
     input_schema: {
       type: 'object' as const,
       properties: {
-        description: { type: 'string' as const, description: "The problem in the user's words, including any exact error text they mentioned and what they were doing when it happened" },
+        description: { type: 'string' as const, description: "The problem, including what the user/you were doing when it happened, plus the error text verbatim and in full -- the user's exact words if they shared an error, or your own failed tool call's complete, untruncated error string if that's what triggered this ticket. Never shorten or summarize the error text itself." },
         severity: { type: 'string' as const, description: 'urgent | normal | low (default normal)' },
       },
       required: ['description'],
@@ -2117,6 +2132,45 @@ import {
   redactRateFields,
   toolsForRole,
 } from '../services/assistantToolAccess';
+
+/**
+ * Parse a navigate_user tool result (JSON `{action, path, label}`) into a
+ * clickable suggested action, or null if the tool result isn't that shape
+ * (e.g. a role-gate denial string). Extracted as a pure function so the
+ * merge-into-suggestedActions behavior is testable without mocking the
+ * full Anthropic tool-use loop.
+ */
+export function parseNavigateActionResult(
+  toolResult: string,
+): { label: string; path: string } | null {
+  try {
+    const parsed = JSON.parse(toolResult);
+    if (parsed?.action === 'navigate' && typeof parsed.path === 'string' && typeof parsed.label === 'string') {
+      return { label: parsed.label, path: parsed.path };
+    }
+  } catch {
+    // Not JSON, or not the expected shape - nothing to surface.
+  }
+  return null;
+}
+
+/**
+ * Merge navigate_user-derived actions into the [Action: ...] text-parsed
+ * suggestedActions, deduped by path so a turn that uses both mechanisms for
+ * the same destination doesn't render two buttons.
+ */
+export function mergeSuggestedActions(
+  textActions: { label: string; path: string }[],
+  navigationActions: { label: string; path: string }[],
+): { label: string; path: string }[] {
+  const merged = [...textActions];
+  for (const navAction of navigationActions) {
+    if (!merged.some((a) => a.path === navAction.path)) {
+      merged.push(navAction);
+    }
+  }
+  return merged;
+}
 
 /**
  * Execute a tool call, enforcing the caller's role.
@@ -2942,12 +2996,27 @@ async function executeToolForPractice(
       }
 
       case 'create_appointment': {
+        // Same two checks the MCP create_appointment tool and this file's own
+        // reschedule_appointment case already do -- this handler was missing
+        // both, so a bad patientId or an unparseable date/time reached the DB
+        // insert instead of a clean error, surfacing only as an undiagnosable
+        // "database insert failed" ticket (demo-practice bug reports #2-#4).
+        const apptPatientId = args.patientId as number;
+        const apptPatient = await storage.getPatient(apptPatientId);
+        if (!apptPatient) return JSON.stringify({ error: `Patient ${apptPatientId} not found.` });
+        if ((apptPatient as any).practiceId !== practiceId) {
+          return JSON.stringify({ error: 'Patient not found in this practice.' });
+        }
+
         const duration = (args.duration as number) || 60;
         const startTime = zonedInstant(String(args.date), String(args.time));
+        if (isNaN(startTime.getTime())) {
+          return JSON.stringify({ error: 'Invalid date/time. Use YYYY-MM-DD and HH:MM (24h).' });
+        }
         const endTime = new Date(startTime.getTime() + duration * 60000);
         const appt = await storage.createAppointment({
           practiceId,
-          patientId: args.patientId as number,
+          patientId: apptPatientId,
           startTime,
           endTime,
           title: (args.type as string) || 'Therapy Session',
@@ -3967,11 +4036,17 @@ async function executeToolForPractice(
         if (activities.length === 0) return JSON.stringify({ error: 'Please provide at least one activity performed during the session.' });
 
         const soapDuration = (args.sessionDuration as number) || 60;
-        const soapMood = (args.mood as string) || 'cooperative and engaged';
+        // Do NOT default blank mood/planNextSteps to a plausible-sounding
+        // phrase — same fabrication risk as server/routes/ai.ts: it tells
+        // the model (and the mood-fabrication backstop) that real therapist
+        // input was supplied when the chat conversation never mentioned it.
+        // '' lets the service's own "not recorded, omit this detail" and
+        // "no plan specified" handling apply, same as a blank form field.
+        const soapMood = (args.mood as string) || '';
         const soapLocation = (args.location as string) || 'clinic';
         const soapPerformance = (args.performance as string) || 'fair';
         const soapAssistanceLevel = (args.assistanceLevel as string) || 'moderate assistance';
-        const soapPlanNextSteps = (args.planNextSteps as string) || 'Continue current treatment goals';
+        const soapPlanNextSteps = (args.planNextSteps as string) || '';
 
         // Call the AI SOAP note + billing generation service
         const soapResult = await generateSoapNoteAndBilling({
@@ -4847,7 +4922,7 @@ async function executeToolForPractice(
           ? new Date((appt as any).startTime).toISOString().split('T')[0]
           : '';
         const description = (args.description as string)
-          || `${(appt as any).title || 'Therapy session'}${startTimeIso ? ` — ${startTimeIso}` : ''}`;
+          || stripeService.neutralAppointmentPaymentDescription(appt.id, startTimeIso || undefined);
         const paymentLink = await stripeService.createPatientPaymentLink({
           amount: Math.round(amountDollars * 100), // cents
           patientName: `${apptPatient.firstName} ${apptPatient.lastName}`,
@@ -4974,13 +5049,13 @@ async function executeToolForPractice(
               return JSON.stringify({ error: 'Invoice is for a different patient.' });
             }
             chargeAmountCents = intent.amount;
-            resolvedDescription = (args.message as string) || intent.description || `Payment for ${patient.firstName} ${patient.lastName}`;
+            resolvedDescription = (args.message as string) || intent.description || stripeService.neutralPatientPaymentDescription(patientId);
           } catch (err) {
             return JSON.stringify({ error: `Could not retrieve invoice ${invoiceId}: ${err instanceof Error ? err.message : 'Unknown error'}` });
           }
         } else {
           chargeAmountCents = Math.round((amount as number) * 100);
-          resolvedDescription = (args.message as string) || `Payment for ${patient.firstName} ${patient.lastName}`;
+          resolvedDescription = (args.message as string) || stripeService.neutralPatientPaymentDescription(patientId);
         }
 
         const paymentLink = await stripeService.createPatientPaymentLink({
@@ -5602,12 +5677,22 @@ async function executeToolForPractice(
         return JSON.stringify({ error: `Unknown tool: ${toolName}` });
     }
   } catch (error) {
+    // DrizzleQueryError's own .message is just "Failed query: <sql>\nparams:
+    // <params>" -- the actual Postgres reason (constraint violated, bad
+    // type, etc.) lives on .cause, the underlying pg driver error. Prefer
+    // it so a thrown DB error carries something diagnosable instead of a
+    // useless SQL dump -- this is also what ends up (truncated) in
+    // auto-filed support tickets via the report_issue tool, so burning the
+    // character budget on the column list instead of the real reason made
+    // every such ticket undiagnosable from its own text.
+    const cause = (error as any)?.cause;
+    const reason = cause instanceof Error ? cause.message : error instanceof Error ? error.message : String(error);
     logger.error('AI assistant tool execution error', {
       tool: toolName,
-      error: error instanceof Error ? error.message : String(error),
+      error: reason,
     });
     return JSON.stringify({
-      error: `Failed to retrieve data: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      error: `Failed to retrieve data: ${reason}`,
     });
   }
 }
@@ -5840,6 +5925,13 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       args: Record<string, any>;
     }> = [];
 
+    // navigate_user's result (JSON `{action, path, label}`) only ever reached
+    // the model as a tool_result - nothing captured it for the client, so
+    // Blanche would narrate "I'm sending you there now" while the frontend
+    // did nothing. Collected here and merged into suggestedActions below,
+    // the same clickable-button path the [Action: ...] text convention uses.
+    const navigationActions: { label: string; path: string }[] = [];
+
     // Handle tool use (up to 3 rounds to avoid infinite loops)
     let toolRounds = 0;
     while (response.stop_reason === 'tool_use' && toolRounds < 3) {
@@ -5902,6 +5994,11 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
             tool_use_id: block.id,
             content: toolResult,
           });
+
+          if (block.name === 'navigate_user') {
+            const navAction = parseNavigateActionResult(toolResult);
+            if (navAction) navigationActions.push(navAction);
+          }
         }
       }
 
@@ -5983,6 +6080,10 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
       }
     }
 
+    // Merge in navigate_user calls, deduped by path against anything the
+    // [Action: ...] text convention already produced for the same turn.
+    const mergedSuggestedActions = mergeSuggestedActions(suggestedActions, navigationActions);
+
     // Clean content of action tags for display
     let cleanContent = content.replace(/\[Action:\s*[^\]]+\]/g, '').trim();
 
@@ -6006,7 +6107,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
     // Cache the response if it was a cacheable question and no tools were used
     const usedTools = toolRounds > 0;
     if (!usedTools && isCacheableQuestion(message)) {
-      cacheResponse(cacheKey, cleanContent, suggestedActions);
+      cacheResponse(cacheKey, cleanContent, mergedSuggestedActions);
     }
 
     // Log cache hit/miss for every turn so we can verify caching is actually
@@ -6061,7 +6162,7 @@ router.post('/assistant', isAuthenticated, async (req: any, res: Response) => {
 
     const responsePayload = {
       response: cleanContent,
-      suggestedActions,
+      suggestedActions: mergedSuggestedActions,
       // Phase 4: deferred mutations awaiting user confirmation. Empty array
       // when Blanche didn't propose anything (or only did reads). Client
       // renders each as a Confirm/Cancel card; POSTs back to /api/ai/confirm-tool.

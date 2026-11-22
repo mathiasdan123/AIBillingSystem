@@ -9,7 +9,7 @@
  *  - POST /api/setup/make-admin
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express, { type Express } from 'express';
 import request from 'supertest';
 
@@ -19,6 +19,7 @@ import request from 'supertest';
 const mockStorage = vi.hoisted(() => ({
   getUser: vi.fn(),
   getAllUsers: vi.fn(),
+  getUsersByPractice: vi.fn(),
   updateUserRole: vi.fn(),
   getInviteByEmail: vi.fn(),
   createInvite: vi.fn(),
@@ -204,11 +205,11 @@ describe('auth routes (server/routes/auth.ts)', () => {
   // ---- GET /api/users (admin only) ----
 
   describe('GET /api/users', () => {
-    it('should return user list for admin', async () => {
+    it('should return the caller practice user list for admin', async () => {
       mockStorage.getUser.mockResolvedValue({ id: 'admin-user-1', role: 'admin' });
-      mockStorage.getAllUsers.mockResolvedValue([
-        { id: 'u1', email: 'a@example.com', firstName: 'Alice', lastName: 'A', role: 'therapist', createdAt: new Date() },
-        { id: 'u2', email: 'b@example.com', firstName: 'Bob', lastName: 'B', role: 'billing', createdAt: new Date() },
+      mockStorage.getUsersByPractice.mockResolvedValue([
+        { id: 'u1', email: 'a@example.com', firstName: 'Alice', lastName: 'A', role: 'therapist', createdAt: new Date(), passwordHash: 'x', practiceId: 1 },
+        { id: 'u2', email: 'b@example.com', firstName: 'Bob', lastName: 'B', role: 'billing', createdAt: new Date(), passwordHash: 'y', practiceId: 1 },
       ]);
 
       const res = await request(app)
@@ -219,6 +220,19 @@ describe('auth routes (server/routes/auth.ts)', () => {
       expect(res.body[0].id).toBe('u1');
       // Passwords/hashes must not be exposed
       expect(res.body[0].passwordHash).toBeUndefined();
+      // Tenant scope: only the caller's practice (req.userPracticeId = 1),
+      // never the platform-wide list.
+      expect(mockStorage.getUsersByPractice).toHaveBeenCalledWith(1);
+      expect(mockStorage.getAllUsers).not.toHaveBeenCalled();
+    });
+
+    it('ignores a ?practiceId for another practice (admin is not a platform admin)', async () => {
+      mockStorage.getUser.mockResolvedValue({ id: 'admin-user-1', role: 'admin' });
+      mockStorage.getUsersByPractice.mockResolvedValue([]);
+
+      await request(app).get('/api/users?practiceId=2').expect(200);
+
+      expect(mockStorage.getUsersByPractice).toHaveBeenCalledWith(1);
     });
 
     it('should return 403 for non-admin users', async () => {
@@ -231,6 +245,54 @@ describe('auth routes (server/routes/auth.ts)', () => {
         .expect(403);
 
       expect(res.body.message).toMatch(/Admin role required/i);
+    });
+  });
+
+  // ---- PATCH /api/users/:id/role (tenant-scoped) ----
+
+  describe('PATCH /api/users/:id/role', () => {
+    beforeEach(() => {
+      mockStorage.getUser.mockImplementation(async (id: string) => {
+        if (id === 'admin-user-1') return { id, role: 'admin', practiceId: 1 };
+        if (id === 'same-practice-user') return { id, role: 'therapist', practiceId: 1 };
+        if (id === 'other-practice-user') return { id, role: 'therapist', practiceId: 2 };
+        if (id === 'unassigned-user') return { id, role: 'therapist', practiceId: null };
+        return undefined;
+      });
+      mockStorage.updateUserRole.mockImplementation(async (id: string, role: string) => ({
+        id, email: `${id}@example.com`, firstName: 'X', lastName: 'Y', role,
+      }));
+    });
+
+    it('changes the role of a user in the admin practice', async () => {
+      const res = await request(app)
+        .patch('/api/users/same-practice-user/role')
+        .send({ role: 'billing' })
+        .expect(200);
+      expect(res.body.role).toBe('billing');
+      expect(mockStorage.updateUserRole).toHaveBeenCalledWith('same-practice-user', 'billing');
+    });
+
+    it('refuses (404, not 403) a user in another practice and changes nothing', async () => {
+      const res = await request(app)
+        .patch('/api/users/other-practice-user/role')
+        .send({ role: 'admin' })
+        .expect(404);
+      expect(res.body.message).toBe('User not found');
+      expect(mockStorage.updateUserRole).not.toHaveBeenCalled();
+    });
+
+    it('refuses a user with no practice and an unknown id', async () => {
+      await request(app).patch('/api/users/unassigned-user/role').send({ role: 'admin' }).expect(404);
+      await request(app).patch('/api/users/nobody/role').send({ role: 'admin' }).expect(404);
+      expect(mockStorage.updateUserRole).not.toHaveBeenCalled();
+    });
+
+    it('still rejects an invalid role before any lookup', async () => {
+      await request(app).patch('/api/users/same-practice-user/role').send({ role: 'owner' }).expect(400);
+      // isAdmin looks up the caller; the target is never fetched or changed.
+      expect(mockStorage.getUser).not.toHaveBeenCalledWith('same-practice-user');
+      expect(mockStorage.updateUserRole).not.toHaveBeenCalled();
     });
   });
 
@@ -403,10 +465,36 @@ describe('auth routes (server/routes/auth.ts)', () => {
 
   describe('POST /api/demo-login', () => {
     beforeEach(() => {
+      // The public demo login is off unless DEMO_LOGIN_ENABLED=true.
+      process.env.DEMO_LOGIN_ENABLED = 'true';
       // ensureDemoPractice() resolves the isolated demo practice; return an
       // already-provisioned one so no create/seed happens in these tests.
       mockStorage.getDemoPractice.mockResolvedValue({ id: 99, isDemo: true });
       mockStorage.getPatients.mockResolvedValue([{ id: 1 }]);
+    });
+    afterEach(() => {
+      delete process.env.DEMO_LOGIN_ENABLED;
+    });
+
+    it('answers 404 and touches nothing when DEMO_LOGIN_ENABLED is not set (the default)', async () => {
+      delete process.env.DEMO_LOGIN_ENABLED;
+      const { ensureDemoPractice } = await import('../services/demoPractice');
+      vi.mocked(ensureDemoPractice).mockClear();
+
+      const res = await request(app).post('/api/demo-login').send({ email: 'demo@therapybill.com' });
+
+      expect(res.status).toBe(404);
+      expect(res.body).toEqual({ message: 'Not found' });
+      expect(ensureDemoPractice).not.toHaveBeenCalled();
+      expect(mockStorage.getUserByEmail).not.toHaveBeenCalled();
+      expect(mockStorage.createUserWithPassword).not.toHaveBeenCalled();
+    });
+
+    it('answers 404 for any value other than true', async () => {
+      process.env.DEMO_LOGIN_ENABLED = '1';
+      expect((await request(app).post('/api/demo-login').send({})).status).toBe(404);
+      process.env.DEMO_LOGIN_ENABLED = 'yes';
+      expect((await request(app).post('/api/demo-login').send({})).status).toBe(404);
     });
 
     it('should log in an existing demo user', async () => {
@@ -833,5 +921,128 @@ describe('role-gating audit — auth routes', () => {
 
       expect(mockStorage.updateUser).toHaveBeenCalledWith('ther-1', expect.objectContaining({ credentials: 'OTR/L' }));
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/mfa/disable — self-service disable needs re-authentication
+// (therapybill-qa #2). Mirrors the guard tests on /users/:id/mfa/reset: a
+// session cookie alone must never be enough to strip a second factor.
+// ---------------------------------------------------------------------------
+import * as OTPAuth from 'otpauth';
+import { generateSecret } from '../services/mfaService';
+import { verifyPassword } from '../services/passwordService';
+import { clearMfaVerification } from '../middleware/mfa-required';
+
+describe('POST /api/mfa/disable (re-authentication required)', () => {
+  let app: Express;
+  const SECRET = generateSecret('admin@example.com').secret;
+  const ADMIN = {
+    id: 'admin-user-1',
+    role: 'admin',
+    practiceId: 1,
+    email: 'admin@example.com',
+    passwordHash: 'argon2-hash',
+    mfaEnabled: true,
+    mfaSecret: SECRET,
+  };
+  const currentCode = (secret: string) =>
+    new OTPAuth.TOTP({ issuer: 'TherapyBill', algorithm: 'SHA1', digits: 6, period: 30, secret: OTPAuth.Secret.fromBase32(secret) }).generate();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authenticatedUserId = 'admin-user-1';
+    authenticatedUserRole = 'admin';
+    app = buildApp();
+    mockStorage.getUser.mockResolvedValue(ADMIN);
+  });
+
+  it('refuses a bare POST (no password, no code) and changes nothing', async () => {
+    const res = await request(app).post('/api/mfa/disable').send({}).expect(401);
+
+    expect(res.body.code).toBe('MFA_REAUTH_REQUIRED');
+    expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+    expect(clearMfaVerification).not.toHaveBeenCalled();
+  });
+
+  it('refuses a wrong password and audits the failed attempt', async () => {
+    vi.mocked(verifyPassword).mockResolvedValueOnce(false);
+
+    const res = await request(app).post('/api/mfa/disable').send({ password: 'not-it' }).expect(401);
+
+    expect(res.body.code).toBe('MFA_REAUTH_FAILED');
+    expect(verifyPassword).toHaveBeenCalledWith('not-it', 'argon2-hash');
+    expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+    const audit = mockStorage.createAuditLog.mock.calls[0][0];
+    expect(audit).toMatchObject({ eventType: 'mfa_disable_self', resourceId: 'admin-user-1', success: false });
+  });
+
+  it('refuses a wrong authenticator code', async () => {
+    const otherSecret = generateSecret('someone@example.com').secret;
+
+    const res = await request(app).post('/api/mfa/disable').send({ token: currentCode(otherSecret) }).expect(401);
+
+    expect(res.body.code).toBe('MFA_REAUTH_FAILED');
+    expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+  });
+
+  it('refuses a password on an account that has none (SSO) without consulting the hasher', async () => {
+    mockStorage.getUser.mockResolvedValue({ ...ADMIN, passwordHash: null });
+
+    const res = await request(app).post('/api/mfa/disable').send({ password: 'anything' }).expect(401);
+
+    expect(res.body.code).toBe('MFA_REAUTH_FAILED');
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
+  });
+
+  it('disables after a correct password, clears the MFA session and audits it', async () => {
+    const res = await request(app).post('/api/mfa/disable').send({ password: 'correct horse' }).expect(200);
+
+    expect(res.body.success).toBe(true);
+    expect(verifyPassword).toHaveBeenCalledWith('correct horse', 'argon2-hash');
+    expect(mockStorage.updateUserMfa).toHaveBeenCalledWith('admin-user-1', {
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaBackupCodes: null,
+    });
+    expect(clearMfaVerification).toHaveBeenCalled();
+    const audit = mockStorage.createAuditLog.mock.calls[0][0];
+    expect(audit).toMatchObject({
+      eventCategory: 'admin',
+      eventType: 'mfa_disable_self',
+      resourceId: 'admin-user-1',
+      userId: 'admin-user-1',
+      practiceId: 1,
+      success: true,
+    });
+    expect(audit.details.reauthMethod).toBe('password');
+  });
+
+  it('disables after a current authenticator code, so SSO admins without a password are not locked out', async () => {
+    mockStorage.getUser.mockResolvedValue({ ...ADMIN, passwordHash: null });
+
+    const res = await request(app).post('/api/mfa/disable').send({ token: currentCode(SECRET) }).expect(200);
+
+    expect(res.body.success).toBe(true);
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(mockStorage.updateUserMfa).toHaveBeenCalledWith('admin-user-1', {
+      mfaEnabled: false,
+      mfaSecret: null,
+      mfaBackupCodes: null,
+    });
+    expect(mockStorage.createAuditLog.mock.calls[0][0].details.reauthMethod).toBe('totp');
+  });
+
+  it('still refuses non-admins, before any credential is examined', async () => {
+    authenticatedUserRole = 'billing';
+    app = buildApp();
+    mockStorage.getUser.mockResolvedValue({ ...ADMIN, role: 'billing' });
+
+    const res = await request(app).post('/api/mfa/disable').send({ password: 'correct horse' }).expect(403);
+
+    expect(res.body.code).toBe('MFA_DISABLE_FORBIDDEN');
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(mockStorage.updateUserMfa).not.toHaveBeenCalled();
   });
 });

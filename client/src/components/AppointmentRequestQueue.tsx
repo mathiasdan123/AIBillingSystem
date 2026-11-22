@@ -191,18 +191,20 @@ export default function AppointmentRequestQueue({ practiceId = 1 }: AppointmentR
   const handleApprove = () => {
     if (!selectedRequest) return;
 
-    // Calculate start and end times
-    const startTime = `${adjustedDate}T${adjustedTime}:00`;
+    // Calculate start and end times. The date + time the staff member picked
+    // are browser-local wall clock; send both as UTC instants. The server
+    // does `new Date(startTime)`, so a bare "YYYY-MM-DDTHH:MM:SS" string was
+    // interpreted in the SERVER's zone (UTC on ECS) and booked a 9:00 AM
+    // Eastern approval at 9:00 AM UTC. endTime was already sent as ISO.
+    const startDate = new Date(`${adjustedDate}T${adjustedTime}:00`);
     const duration = selectedRequest.appointmentTypeDuration || 60;
-    const endDate = new Date(startTime);
-    endDate.setMinutes(endDate.getMinutes() + duration);
-    const endTime = endDate.toISOString();
+    const endDate = new Date(startDate.getTime() + duration * 60_000);
 
     approveMutation.mutate({
       requestId: selectedRequest.id,
       therapistId: assignedTherapist || undefined,
-      startTime,
-      endTime,
+      startTime: startDate.toISOString(),
+      endTime: endDate.toISOString(),
       notes: approvalNotes || undefined,
     });
   };

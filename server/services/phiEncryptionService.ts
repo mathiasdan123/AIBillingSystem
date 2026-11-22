@@ -189,6 +189,19 @@ const USER_PHI_STRING_FIELDS = [
   'licenseNumber', 'npiNumber', 'digitalSignature',
 ] as const;
 
+// MFA TOTP seed. jsonb column — unlike USER_PHI_STRING_FIELDS (varchar/text,
+// not JSON-stringified before storage; see encryptUserRecord/decryptUserRecord
+// callers for that distinction), the EncryptedField object is stored here
+// directly, same as the jsonb fields elsewhere in this file. Was written and
+// read as a raw, unencrypted string despite the schema comment claiming
+// encryption (2026-10 finding) — existing enrollments were force-reset
+// (scripts/force-mfa-reenrollment*) rather than migrated in place, so
+// decryptField's legacy-plaintext fallback below is a safety net for any row
+// that slips through that reset, not the primary migration path.
+const USER_PHI_JSONB_FIELDS = [
+  'mfaSecret',
+] as const;
+
 // Practice sensitive fields - tax IDs, API keys, contact info
 const PRACTICE_PHI_STRING_FIELDS = [
   'taxId', 'phone', 'stediApiKey', 'stediPartnerId',
@@ -330,9 +343,51 @@ export function encryptSoapNoteRecord(note: Record<string, any>): Record<string,
 }
 
 // Drafts use the same PHI fields as signed soap notes — they're the same
-// clinical content, just in-progress. Reuse the field list.
-export const encryptSoapDraftRecord = encryptSoapNoteRecord;
-export const decryptSoapDraftRecord = decryptSoapNoteRecord;
+// clinical content, just in-progress — plus one jsonb column of their own:
+// `billing`, the suggested CPT codes / activity pairings / time blocks /
+// rationale that came back with the generated note. That blob carries the
+// session's activity descriptions and the model's rationale prose next to
+// patient_id, which is the same class of content as the Objective it was
+// derived from, so it is encrypted as one AES-256-GCM payload (the
+// EncryptedField object stored directly in the jsonb column, like mfaSecret
+// and Blanche `messages`) rather than left in plaintext beside the encrypted
+// prose (PR #463 review).
+const SOAP_DRAFT_PHI_JSONB_FIELDS = ['billing'] as const;
+
+export function encryptSoapDraftRecord(draft: Record<string, any>): Record<string, any> {
+  const encrypted = encryptSoapNoteRecord(draft);
+  for (const field of SOAP_DRAFT_PHI_JSONB_FIELDS) {
+    if (encrypted[field] !== undefined) {
+      // null stays null ("no billing saved yet"); an object becomes a
+      // {ciphertext, iv, tag} object.
+      encrypted[field] = encryptValue(encrypted[field]);
+    }
+  }
+  return encrypted;
+}
+
+export function decryptSoapDraftRecord(draft: Record<string, any> | null | undefined): Record<string, any> | null {
+  const decrypted = decryptSoapNoteRecord(draft);
+  if (!decrypted) return null;
+  for (const field of SOAP_DRAFT_PHI_JSONB_FIELDS) {
+    const stored = decrypted[field];
+    if (stored === undefined || stored === null) continue;
+    // The column shipped encrypted from day one, so a plaintext object on
+    // disk is corrupt or hand-written, never legacy. Treat it as absent
+    // rather than serving unencrypted PHI back (same rule as Blanche
+    // messages). decryptValue also returns the raw string for a bare-string
+    // value, which is not a billing object either.
+    const isEncryptedField = typeof stored === 'object' && !Array.isArray(stored)
+      && typeof stored.ciphertext === 'string' && typeof stored.iv === 'string' && typeof stored.tag === 'string';
+    if (!isEncryptedField) {
+      decrypted[field] = null;
+      continue;
+    }
+    const value = decryptValue(stored, true);
+    decrypted[field] = value && typeof value === 'object' && !Array.isArray(value) ? value : null;
+  }
+  return decrypted;
+}
 
 export function decryptSoapNoteRecord(note: Record<string, any> | null | undefined): Record<string, any> | null {
   if (!note) return null;
@@ -462,6 +517,11 @@ export function encryptUserRecord(user: Record<string, any>): Record<string, any
       encrypted[field] = encryptField(encrypted[field] as string);
     }
   }
+  for (const field of USER_PHI_JSONB_FIELDS) {
+    if (encrypted[field] !== undefined && encrypted[field] !== null) {
+      encrypted[field] = encryptField(encrypted[field] as string);
+    }
+  }
   return encrypted;
 }
 
@@ -469,6 +529,11 @@ export function decryptUserRecord(user: Record<string, any> | null | undefined):
   if (!user) return null;
   const decrypted = { ...user };
   for (const field of USER_PHI_STRING_FIELDS) {
+    if (decrypted[field] !== undefined && decrypted[field] !== null) {
+      decrypted[field] = decryptField(decrypted[field]);
+    }
+  }
+  for (const field of USER_PHI_JSONB_FIELDS) {
     if (decrypted[field] !== undefined && decrypted[field] !== null) {
       decrypted[field] = decryptField(decrypted[field]);
     }

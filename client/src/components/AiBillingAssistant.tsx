@@ -1,5 +1,7 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { apiRequest, streamRequest } from "@/lib/queryClient";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
@@ -114,7 +116,14 @@ function loadLegacyHistoryOnce(): ChatMessage[] {
 }
 
 export default function AiBillingAssistant() {
-  const { isAuthenticated, user } = useAuth();
+  const { isAuthenticated, user, needsMfaSetup, needsMfaChallenge } = useAuth();
+  // This component is mounted OUTSIDE App.tsx's Router gate, so it stays
+  // mounted while the MFA setup / challenge screen is showing. Any PHI-gated
+  // request it fires in that state 403s (MFA_SETUP_REQUIRED /
+  // MFA_VERIFICATION_REQUIRED) -- noise for the high-403 alarm, and on
+  // 2026-11-03 the trigger for a full-page reload loop via
+  // refreshAuthForMfaGate. Treat "authenticated but MFA-gated" as not ready.
+  const canCallPhiApis = isAuthenticated && !needsMfaSetup && !needsMfaChallenge;
   const queryClient = useQueryClient();
   const userId = (user as any)?.id ?? null;
   const { toast } = useToast();
@@ -206,7 +215,7 @@ export default function AiBillingAssistant() {
   // invalidates the key on every step, so a long staleTime is safe.
   const { data: onboardingData } = useQuery<{ step?: number; completed?: boolean }>({
     queryKey: ['/api/onboarding/status'],
-    enabled: isAuthenticated,
+    enabled: canCallPhiApis,
     staleTime: 5 * 60_000,
     retry: false,
   });
@@ -228,6 +237,13 @@ export default function AiBillingAssistant() {
   // Phase 3: also suppress for established practices whose setup is complete —
   // they've been here a while and don't need a "Hi, I'm Blanche" version pitch.
   useEffect(() => {
+    // This is an in-app onboarding pitch ("Hi, I'm Blanche" / new-hire
+    // welcome) -- it has no meaning for an anonymous marketing-site visitor,
+    // and onboardingStatus is always null while signed out (its query is
+    // gated on isAuthenticated), so the completed-practice guard below never
+    // actually stops it for them. Without this check the greeting popped up
+    // on every public page, including /privacy, covering the page content.
+    if (!isAuthenticated) return;
     if (onboardingStatus?.completed) return;
     const key = greetedKey(userId);
     const lastSeenVersion = localStorage.getItem(key);
@@ -345,7 +361,7 @@ export default function AiBillingAssistant() {
   // server has nothing (new user) but localStorage had legacy state, we keep
   // the local state — the next POST /api/ai/assistant turn will persist it.
   useEffect(() => {
-    if (!isOpen || !isAuthenticated || !userId) return;
+    if (!isOpen || !canCallPhiApis || !userId) return;
     if (loadedForUserId === userId) return;
     // Clear any in-memory state from a previous user before fetching —
     // otherwise their messages would briefly be visible to the new user
@@ -1044,8 +1060,16 @@ export default function AiBillingAssistant() {
                       : "bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100"
                   }`}
                 >
-                  <div className="whitespace-pre-wrap break-words leading-relaxed">
-                    {msg.content}
+                  <div
+                    className="break-words leading-relaxed [&_p]:my-1 [&_p:first-child]:mt-0 [&_p:last-child]:mb-0
+                      [&_ul]:my-1 [&_ul]:pl-4 [&_ul]:list-disc [&_ol]:my-1 [&_ol]:pl-4 [&_ol]:list-decimal [&_li]:my-0.5
+                      [&_strong]:font-semibold [&_em]:italic
+                      [&_h1]:text-base [&_h1]:font-bold [&_h1]:mt-2 [&_h1]:mb-1
+                      [&_h2]:text-sm [&_h2]:font-bold [&_h2]:mt-2 [&_h2]:mb-1
+                      [&_h3]:text-sm [&_h3]:font-semibold [&_h3]:mt-1 [&_h3]:mb-1
+                      [&_code]:bg-black/10 dark:[&_code]:bg-white/10 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded [&_code]:text-xs"
+                  >
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                   </div>
 
                   {/* Suggested action buttons */}

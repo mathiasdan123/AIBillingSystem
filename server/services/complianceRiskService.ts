@@ -21,6 +21,7 @@
 
 import { scrubClaim } from "./claimScrubber";
 import { predictDenial, type DenialPredictionResult } from "./aiDenialPredictor";
+import { buildPredictDenialClaimInput } from './claimDenialInputs';
 import { storage } from "../storage";
 import logger from "./logger";
 import {
@@ -116,7 +117,7 @@ export async function assessComplianceRisk(
     try {
       const patient = claim.patientId ? await storage.getPatient(claim.patientId) : null;
       const prediction: DenialPredictionResult = await predictDenial(
-        claim as any,
+        await buildPredictDenialClaimInput(claim as any),
         lineItems as any[],
         soapNote,
         (patient as any) ?? { firstName: "", lastName: "" },

@@ -208,20 +208,42 @@ describe('computeReadiness', () => {
     const r = computeReadiness({ ...complete, npi: '1234567890' });
     expect(r.npiValid).toBe(false);
     expect(r.complete).toBe(false);
-    expect(r.missing.some((m) => m.startsWith('npi'))).toBe(true);
+    expect(r.missing).toContain('NPI (invalid: failed checksum)');
+    expect(r.missingFields).toContain('npiInvalid');
   });
 
   it('accepts legacy single-line address as a fallback', () => {
     const { addressStreet, addressCity, addressState, addressZip, ...rest } = complete;
     const r = computeReadiness({ ...rest, address: '123 Therapy Lane, City, NJ 07000' });
-    expect(r.missing).not.toContain('billing address');
+    expect(r.missing).not.toContain('Billing address');
+    expect(r.missingFields).not.toContain('address');
   });
 
   it('lists missing fields for an empty practice', () => {
     const r = computeReadiness({});
     expect(r.complete).toBe(false);
-    expect(r.missing).toContain('name');
-    expect(r.missing).toContain('taxId');
-    expect(r.missing).toContain('enrollment authorization');
+    expect(r.missingFields).toEqual([
+      'name', 'npi', 'npiType', 'taxId', 'address',
+      'billingContactName', 'billingContactEmail', 'taxonomyCode', 'enrollmentAuthorization',
+    ]);
+    expect(r.missing).toContain('Practice name');
+    expect(r.missing).toContain('Tax ID (EIN)');
+    expect(r.missing).toContain('Enrollment authorization');
+  });
+
+  it('shows friendly labels, never raw field keys, in the list the page renders (therapybill-qa #2)', () => {
+    const r = computeReadiness({ name: 'Demo OT', npi: '0000000001' });
+    expect(r.missing).toEqual([
+      'NPI (invalid: failed checksum)',
+      'NPI type (individual or organization)',
+      'Tax ID (EIN)',
+      'Billing address',
+      'Billing contact name',
+      'Billing contact email',
+      'Taxonomy code',
+      'Enrollment authorization',
+    ]);
+    // No camelCase key leaks through to the UI.
+    for (const label of r.missing) expect(label).not.toMatch(/^[a-z]+[A-Z]/);
   });
 });

@@ -292,7 +292,7 @@ export default function Billing() {
       id: 'professional',
       name: 'Professional',
       price: '$199/mo',
-      features: ['Up to 5 OTs', 'Telehealth', 'Full analytics & reporting', 'Email + chat support'],
+      features: ['Up to 5 OTs', 'Full analytics & reporting', 'Email + chat support'],
       recommended: true,
     },
     {

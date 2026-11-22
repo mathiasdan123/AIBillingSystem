@@ -26,7 +26,7 @@ vi.mock('../services/aiLearningService', () => ({
   getRecommendationsForClaim: vi.fn().mockResolvedValue([]),
 }));
 
-import { predictDenial } from '../services/aiDenialPredictor';
+import { predictDenial, resolvePayerForAnalysis, effectiveServiceDates, serviceDateCoverage } from '../services/aiDenialPredictor';
 
 // Helper factories
 function makeClaim(overrides: Record<string, any> = {}) {
@@ -513,5 +513,64 @@ describe('denial-prediction date guardrails (output)', () => {
       makePatient()
     );
     expect(JSON.stringify(result)).not.toMatch(/correct the date of service/i);
+  });
+});
+
+describe('claim-level inputs (QA demo pass 2026-11-19, item 5)', () => {
+  it('reasons about the payer the claim is billed to, not the chart plan', () => {
+    expect(resolvePayerForAnalysis({ insuranceName: 'Aetna' }, { insuranceProvider: 'Horizon BCBS' })).toEqual({ label: 'Aetna', source: 'claim' });
+    expect(resolvePayerForAnalysis({ insuranceName: null }, { insuranceProvider: 'Horizon BCBS' })).toEqual({ label: 'Horizon BCBS', source: 'patient_chart' });
+    expect(resolvePayerForAnalysis({ insuranceName: ' ' }, { insuranceProvider: null })).toEqual({ label: 'Unknown', source: 'unknown' });
+  });
+});
+
+describe('service dates come from the line items and the linked session (the claims table has none)', () => {
+  const dated = (d: string) => makeLineItem({ dateOfService: d });
+  const undated = () => makeLineItem({ dateOfService: null });
+
+  it('uses each line\'s own date, the session date for a line without one, and reports the rest', () => {
+    expect(serviceDateCoverage({ sessionDate: '2026-10-26' }, [undated(), dated('2026-10-27')])).toEqual({
+      dates: ['2026-10-26', '2026-10-27'], datedLines: 1, undatedLines: 0, linesFromSession: 1, hasSessionDate: true,
+    });
+    expect(serviceDateCoverage({ sessionDate: null }, [undated(), dated('2026-10-27')])).toEqual({
+      dates: ['2026-10-27'], datedLines: 1, undatedLines: 1, linesFromSession: 0, hasSessionDate: false,
+    });
+    expect(serviceDateCoverage({ sessionDate: '2026-10-26' }, [])).toEqual({
+      dates: ['2026-10-26'], datedLines: 0, undatedLines: 0, linesFromSession: 0, hasSessionDate: true,
+    });
+    expect(effectiveServiceDates({ sessionDate: null }, [undated()])).toEqual([]);
+  });
+
+  it('all lines undated and no session date: critical missing-date issue', async () => {
+    const result = await predictDenial(makeClaim({ sessionDate: null }), [undated(), undated()], makeSoapNote(), makePatient());
+    const issue = result.issues.find(i => i.description.startsWith('No date of service on any line item'));
+    expect(issue?.severity).toBe('critical');
+  });
+
+  it('all lines undated but a linked session date: no missing-date issue, session date used for timely filing', async () => {
+    const old = new Date(Date.now() - 200 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const result = await predictDenial(makeClaim({ sessionDate: old }), [undated()], makeSoapNote(), makePatient());
+    expect(result.issues.find(i => i.category === 'Missing Data' && /date of service/.test(i.description))).toBeUndefined();
+    expect(result.issues.find(i => i.category === 'Timely Filing')?.severity).toBe('critical');
+  });
+
+  it('mixed lines and no session date: a high issue naming how many lines are undated', async () => {
+    const today = new Date().toISOString().split('T')[0];
+    const result = await predictDenial(makeClaim({ sessionDate: null }), [dated(today), undated(), undated()], makeSoapNote(), makePatient());
+    const issue = result.issues.find(i => i.category === 'Missing Data' && /date of service/.test(i.description));
+    expect(issue?.severity).toBe('high');
+    expect(issue?.description).toBe('2 of 3 line item(s) have no date of service');
+  });
+
+  it('mixed lines with a session date: the undated lines take it and nothing is flagged', async () => {
+    const today = new Date().toISOString().split('T')[0];
+    const result = await predictDenial(makeClaim({ sessionDate: today }), [dated(today), undated()], makeSoapNote(), makePatient());
+    expect(result.issues.find(i => i.category === 'Missing Data' && /date of service/.test(i.description))).toBeUndefined();
+  });
+
+  it('with no line items at all, only the "no line items" issue is raised', async () => {
+    const result = await predictDenial(makeClaim({ sessionDate: null }), [], makeSoapNote(), makePatient());
+    expect(result.issues.filter(i => i.category === 'Missing Data')).toHaveLength(1);
+    expect(result.issues[0].description).toContain('no line items');
   });
 });

@@ -59,6 +59,22 @@ export class PatientPaymentsNotEnabledError extends Error {
   }
 }
 
+/**
+ * Default PaymentIntent/PaymentLink description to use when no caller
+ * supplies one. Never put the patient's name or any clinical/treatment
+ * detail here - this text becomes Stripe's own description, which appears
+ * on the receipt Stripe emails the patient and in the Stripe Dashboard.
+ * Patient/appointment IDs are fine: meaningless outside this app's own
+ * database, not identifying on their own.
+ */
+export function neutralPatientPaymentDescription(patientId: number): string {
+  return `Practice Payment — Patient #${patientId}`;
+}
+
+export function neutralAppointmentPaymentDescription(appointmentId: number, dateIso?: string): string {
+  return `Appointment Payment — #${appointmentId}${dateIso ? ` (${dateIso})` : ''}`;
+}
+
 export function practiceMayCollectPatientPayments(practiceId: number): boolean {
   const raw = process.env.PATIENT_PAYMENT_PRACTICE_IDS;
   const allowed = (raw && raw.trim() ? raw.split(',') : ['1'])

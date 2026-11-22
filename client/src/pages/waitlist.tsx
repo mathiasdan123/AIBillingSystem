@@ -175,11 +175,16 @@ export default function WaitlistPage() {
     },
   });
 
-  // Fetch patients for the add dialog
+  // Fetch patients: name lookups for every entry plus the add dialog's picker.
+  // `archived=include` (mirrors #474 on Claims): this list resolves the
+  // patient NAME on existing records, and those belong to the patient after
+  // the patient is archived. The default list excludes archived patients,
+  // which made their existing records read "Patient #n" (QA 2026-11-18).
+  // Pickers that create something new use `pickablePatients` instead.
   const { data: patientsData } = useQuery<any>({
-    queryKey: ["/api/patients"],
+    queryKey: ["/api/patients", "?archived=include"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/patients");
+      const res = await apiRequest("GET", "/api/patients?archived=include");
       return res.json();
     },
   });
@@ -187,6 +192,7 @@ export default function WaitlistPage() {
   const patients: Patient[] = Array.isArray(patientsData)
     ? patientsData
     : patientsData?.data || [];
+  const pickablePatients = patients.filter((p: any) => !p.archivedAt);
 
   // Fetch therapists
   const { data: therapists = [] } = useQuery<Therapist[]>({
@@ -440,7 +446,7 @@ export default function WaitlistPage() {
               </DialogDescription>
             </DialogHeader>
             <AddWaitlistForm
-              patients={patients}
+              patients={pickablePatients}
               therapists={therapists}
               onSubmit={(data) => createEntry.mutate(data)}
               isLoading={createEntry.isPending}
@@ -1055,7 +1061,6 @@ function AddWaitlistForm({
           lastName: newPatientData.lastName.trim(),
           phone: newPatientData.phone.trim() || null,
           email: newPatientData.email.trim() || null,
-          dateOfBirth: "2000-01-01",
         });
         const created = await res.json();
         patientId = String(created.id);

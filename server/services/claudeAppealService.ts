@@ -10,6 +10,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { createAiClient, isAiConfigured } from './aiProvider';
 import { logger } from './logger';
 import { assertPhiAiAllowed } from '../utils/phiAiGuard';
+import { formatDateOnlyShort } from '../utils/dateOnly';
 import type { ClaimPrecedent } from './claimPrecedentService';
 import { formatPrecedentsForAppeal } from './claimPrecedentService';
 import type { ProvenArgument } from './appealOutcomeLearningService';
@@ -139,6 +140,13 @@ export function buildSystemPrompt(): string {
    - Payer policy guidelines and coverage criteria
    - Medical necessity standards and practice guidelines (e.g., AOTA, APA)
    - Relevant CPT/ICD-10 coding guidelines
+   - ONLY what is in this prompt. Never state that a record exists (an
+     evaluation, a treatment plan, progress notes, an authorization) unless
+     the prompt provides it; never state the service was urgent, that a
+     retroactive authorization was requested, or that treatment conformed to
+     a professional guideline unless the prompt says so. A sentence asserting
+     a record or event the prompt does not contain is removed before the
+     letter is stored, and the appeal is held as a draft.
 
 4. **Denial Categories**: Common categories include:
    - Medical necessity denials
@@ -239,12 +247,12 @@ export function buildUserPrompt(params: GenerateClaudeAppealParams): string {
   });
 
   const dateOfService = claim.submittedAt
-    ? new Date(claim.submittedAt).toLocaleDateString('en-US')
+    ? formatDateOnlyShort(claim.submittedAt, 'See attached documentation')
     : 'See attached documentation';
 
-  const patientDOB = patient.dateOfBirth
-    ? new Date(patient.dateOfBirth).toLocaleDateString('en-US')
-    : 'On file';
+  // Date-only column: format from its parts, never through new Date(), which
+  // parses 'YYYY-MM-DD' as UTC midnight and prints the previous/next day.
+  const patientDOB = formatDateOnlyShort(patient.dateOfBirth, 'On file');
 
   // Build CPT codes list
   const cptCodes = lineItems
@@ -631,9 +639,10 @@ export async function generateClaudeAppeal(
 }
 
 /**
- * Check if Claude appeal service is available (API key configured)
+ * Whether Claude-drafted appeals are available: the provider-aware check
+ * (Bedrock via the task role, or a direct-API key). Testing for the API key
+ * alone made every appeal fall back to the template generator on Bedrock.
  */
 export function isClaudeAppealAvailable(): boolean {
-  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY;
-  return !!apiKey;
+  return isAiConfigured();
 }

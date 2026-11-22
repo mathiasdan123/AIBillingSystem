@@ -6,6 +6,7 @@ import {
   createPatientPaymentLink,
   getStripeInstance,
   isStripeConfigured,
+  neutralPatientPaymentDescription,
 } from '../../services/stripeService';
 import { rejectIfDemoDataMessage } from '../../services/bulkEligibilityService';
 import { withAudit } from '../audit';
@@ -57,7 +58,7 @@ export function registerInvoiceTools(
     {
       patientId: z.number().describe('Patient to create invoice for'),
       amount: z.number().describe('Invoice amount in dollars'),
-      description: z.string().describe('Invoice description'),
+      description: z.string().describe('Invoice description. This reaches Stripe (payment receipts and dashboard) - never include the patient\'s name or any clinical/treatment detail here; use a neutral reference like an invoice or service date instead.'),
       claimId: z.number().optional().describe('Associated claim ID'),
     },
     (input) => createInvoice(input, context),
@@ -119,7 +120,7 @@ export function registerInvoiceTools(
               throw new Error('Invoice is for a different patient.');
             }
             chargeAmountCents = intent.amount;
-            resolvedDescription = message || intent.description || `Payment for ${patient.firstName} ${patient.lastName}`;
+            resolvedDescription = message || intent.description || neutralPatientPaymentDescription(patientId);
           } catch (err) {
             if (err instanceof Error && (
               err.message === 'Invoice not found for this practice.' ||
@@ -129,7 +130,7 @@ export function registerInvoiceTools(
           }
         } else {
           chargeAmountCents = Math.round((amount as number) * 100);
-          resolvedDescription = message || `Payment for ${patient.firstName} ${patient.lastName}`;
+          resolvedDescription = message || neutralPatientPaymentDescription(patientId);
         }
 
         const paymentLink = await createPatientPaymentLink({

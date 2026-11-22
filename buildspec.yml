@@ -32,8 +32,14 @@ phases:
       # --load brings the built image into the local docker daemon so the existing
       # post_build steps (source-map extraction via `docker create`, then push) keep
       # working unchanged. The cross-run layer cache lives at the :buildcache* ECR tags.
+      # --pull: always re-resolve the floating node:NN-slim base tag against the
+      # registry. Without it the base layer can be served from the :buildcache
+      # ECR cache indefinitely, so a Node security release (or a CA-store update
+      # in the base image) never reaches production until the cache happens to
+      # miss. Added 2026-11-03 alongside the Node 20 -> 22 move.
       - >-
         docker buildx build
+        --pull
         --build-arg SENTRY_RELEASE=$SENTRY_RELEASE
         --build-arg RELEASE_SHA=$RELEASE_SHA
         --target production
@@ -47,6 +53,7 @@ phases:
       # keeps its own cache tag for the drizzle-kit dev-deps layer.
       - >-
         docker buildx build
+        --pull
         --target migrate
         --cache-from type=registry,ref=$ECR_REPO:buildcache
         --cache-from type=registry,ref=$ECR_REPO:buildcache-migrate

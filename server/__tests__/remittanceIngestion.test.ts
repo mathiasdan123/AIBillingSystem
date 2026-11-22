@@ -171,3 +171,17 @@ describe('ingestRemittance', () => {
     expect(H.lineItemInserts[0].patientName).toBe('ENC');
   });
 });
+
+describe('ingestRemittance — CLP02 claim status (demo billing test 2026-11-19)', () => {
+  it('stores the status code on the line, null when the caller has none', async () => {
+    const withStatus = {
+      ...REMITTANCE,
+      lineItems: [
+        { ...REMITTANCE.lineItems[0], claimStatusCode: '4', paidAmount: 0 },
+        { ...REMITTANCE.lineItems[0] },
+      ],
+    };
+    await ingestRemittance(1, withStatus as any, opts());
+    expect(H.lineItemInserts.map((li: any) => li.claimStatusCode)).toEqual(['4', null]);
+  });
+});

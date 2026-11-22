@@ -19,6 +19,8 @@ import { isAuthenticated } from '../replitAuth';
 import { setMfaVerified, clearMfaVerification, isMfaSessionValid, MFA_PROTECTED_ROUTES, MFA_CONFIG } from '../middleware/mfa-required';
 import { authLimiter, mfaChallengeLimiter } from '../middleware/rate-limiter';
 import logger from '../services/logger';
+import { isDemoLoginEnabled } from '../services/demoLoginGate';
+import { isPlatformAdminEmail } from '../services/platformAdmin';
 
 const router = Router();
 
@@ -88,7 +90,25 @@ router.get('/auth/user', isAuthenticated, async (req: any, res) => {
     // no way to know to route the user to /mfa-challenge, so every PHI query
     // just 403'd repeatedly and got misreported as "session expired" in a loop.
     const mfaChallengeRequired = user.mfaEnabled && !isMfaSessionValid(req.session, userId);
-    res.json({ ...user, mfaRequired, mfaChallengeRequired });
+    // SECURITY: never spread the raw user row into the response. It carries
+    // passwordHash, mfaSecret (a TOTP seed - see the mfaSecret-is-plaintext
+    // finding logged separately), mfaBackupCodes, and password/email
+    // verification tokens. This endpoint is polled on every authenticated
+    // page load, so a spread here shipped all of that to the browser on
+    // every single request. Return an explicit allowlist instead - add a
+    // field here deliberately, never by widening the spread back out.
+    res.json({
+      id: user.id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      profileImageUrl: user.profileImageUrl,
+      role: user.role,
+      practiceId: user.practiceId,
+      isPlatformAdmin: isPlatformAdminEmail(user.email),
+      mfaRequired,
+      mfaChallengeRequired,
+    });
   } catch (error) {
     logger.error("Error fetching user", { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: "Failed to fetch user" });
@@ -97,10 +117,12 @@ router.get('/auth/user', isAuthenticated, async (req: any, res) => {
 
 // ==================== USER MANAGEMENT (Admin Only) ====================
 
-// Get all users
-router.get('/users', isAuthenticated, isAdmin, async (req, res) => {
+// Users of the caller's practice. Tenant-scoped (2026-11-19): this listed
+// every user on the platform to any practice admin, demo visitors included.
+router.get('/users', isAuthenticated, isAdmin, async (req: any, res) => {
   try {
-    const users = await storage.getAllUsers();
+    const practiceId = getAuthorizedPracticeId(req);
+    const users = await storage.getUsersByPractice(practiceId);
     const safeUsers = users.map(u => ({
       id: u.id,
       email: u.email,
@@ -129,6 +151,23 @@ router.patch('/users/:id/role', isAuthenticated, isAdmin, async (req: any, res) 
     const currentUserId = req.user?.claims?.sub;
     if (id === currentUserId && role !== 'admin') {
       return res.status(400).json({ message: "You cannot remove your own admin role" });
+    }
+
+    // Tenant check (2026-11-19): user ids are guessable and this changed the
+    // role of whatever id it was given. Same practice only; 404 so an id in
+    // another practice is not confirmed to exist.
+    const practiceId = getAuthorizedPracticeId(req);
+    const target = await storage.getUser(id);
+    if (!target || !target.practiceId || target.practiceId !== practiceId) {
+      if (target) {
+        logger.warn('Cross-practice role change blocked', {
+          adminId: currentUserId,
+          targetUserId: id,
+          adminPracticeId: practiceId,
+          targetPracticeId: target.practiceId,
+        });
+      }
+      return res.status(404).json({ message: "User not found" });
     }
 
     const updatedUser = await storage.updateUserRole(id, role);
@@ -353,7 +392,22 @@ router.post('/mfa/verify', authLimiter, isAuthenticated, async (req: any, res) =
   }
 });
 
-router.post('/mfa/disable', isAuthenticated, async (req: any, res) => {
+/**
+ * Self-service MFA disable (admins only).
+ *
+ * Re-authentication is required (therapybill-qa #2): the caller must present
+ * either their password or a current authenticator code in the body. Holding
+ * a session cookie is not enough. Without this, a hijacked admin session could
+ * strip the account's second factor with one POST and then enrol a factor the
+ * attacker controls; /users/:id/mfa/reset already treats touching a second
+ * factor as a privileged act, and this route now does too.
+ *
+ * Either credential is accepted because SSO-provisioned accounts have no
+ * password hash; for them the authenticator code is the only option. A failed
+ * attempt is audited and the response does not say which credential was
+ * checked. authLimiter bounds guessing at the same rate as login.
+ */
+router.post('/mfa/disable', authLimiter, isAuthenticated, async (req: any, res) => {
   try {
     const userId = req.user.claims.sub;
     // MFA is mandatory for HIPAA compliance - only admins can disable for account recovery
@@ -364,11 +418,71 @@ router.post('/mfa/disable', isAuthenticated, async (req: any, res) => {
         code: 'MFA_DISABLE_FORBIDDEN'
       });
     }
+
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const token = typeof req.body?.token === 'string' ? req.body.token.trim() : '';
+    if (!password && !token) {
+      return res.status(401).json({
+        message: 'Re-enter your password or a current authenticator code to disable MFA.',
+        code: 'MFA_REAUTH_REQUIRED',
+      });
+    }
+
+    let reauthMethod: 'password' | 'totp' | null = null;
+    if (token) {
+      const { verifyToken } = await import('../services/mfaService');
+      const rawSecret = currentUser.mfaSecret;
+      const secret = typeof rawSecret === 'string' ? rawSecret : (rawSecret as any)?.secret;
+      if (secret && verifyToken(secret as string, token)) reauthMethod = 'totp';
+    }
+    if (!reauthMethod && password) {
+      const { verifyPassword } = await import('../services/passwordService');
+      if (currentUser.passwordHash && (await verifyPassword(password, currentUser.passwordHash))) {
+        reauthMethod = 'password';
+      }
+    }
+
+    if (!reauthMethod) {
+      logger.warn('MFA self-disable refused: re-authentication failed', {
+        userId,
+        attempted: token ? 'totp' : 'password',
+      });
+      await storage.createAuditLog({
+        eventCategory: 'admin',
+        eventType: 'mfa_disable_self',
+        resourceType: 'user',
+        resourceId: userId,
+        userId,
+        practiceId: currentUser.practiceId,
+        ipAddress: req.ip,
+        userAgent: req.get('user-agent'),
+        details: { attempted: token ? 'totp' : 'password' },
+        success: false,
+      });
+      return res.status(401).json({
+        message: 'Re-authentication failed. Check your password or authenticator code and try again.',
+        code: 'MFA_REAUTH_FAILED',
+      });
+    }
+
     await storage.updateUserMfa(userId, { mfaEnabled: false, mfaSecret: null, mfaBackupCodes: null });
     clearMfaVerification(req.session);
-    logger.warn('MFA disabled by admin for account recovery', { userId });
+    logger.warn('MFA disabled by admin for own account', { userId, reauthMethod });
+    await storage.createAuditLog({
+      eventCategory: 'admin',
+      eventType: 'mfa_disable_self',
+      resourceType: 'user',
+      resourceId: userId,
+      userId,
+      practiceId: currentUser.practiceId,
+      ipAddress: req.ip,
+      userAgent: req.get('user-agent'),
+      details: { reauthMethod },
+      success: true,
+    });
     res.json({ success: true });
   } catch (error) {
+    logger.error('MFA disable error', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ message: 'Failed to disable MFA' });
   }
 });
@@ -796,6 +910,12 @@ const DEMO_ACCOUNTS: Record<string, { password: string; firstName: string; lastN
 // endpoint can NEVER land on a real practice — the earlier prod exposure was
 // caused by defaulting to the first practice in the DB; that is now impossible.
 router.post('/demo-login', async (req: any, res) => {
+  // Off unless DEMO_LOGIN_ENABLED=true (server/services/demoLoginGate.ts):
+  // a public, credential-free login is not something to leave reachable by
+  // default. 404, as if the route did not exist.
+  if (!isDemoLoginEnabled()) {
+    return res.status(404).json({ message: 'Not found' });
+  }
   try {
     const { hashPassword } = await import('../services/passwordService');
     const { ensureDemoPractice } = await import('../services/demoPractice');

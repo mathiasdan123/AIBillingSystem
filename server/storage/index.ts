@@ -20,6 +20,7 @@ export * from "./analytics";
 export * from "./audit";
 export * from "./blancheConversations";
 export * from "./progressNotes";
+export * from "./claimEvents";
 
 // Re-export all domain functions as methods on a storage object for backwards compatibility
 import * as userFns from "./users";
@@ -38,6 +39,7 @@ import * as pdms2Fns from "./pdms2";
 import * as auditFns from "./audit";
 import * as blancheConversationFns from "./blancheConversations";
 import * as progressNoteFns from "./progressNotes";
+import * as claimEventFns from "./claimEvents";
 
 export const storage = {
   // ==================== BLANCHE CHAT ====================
@@ -49,6 +51,7 @@ export const storage = {
   getUser: userFns.getUser,
   upsertUser: userFns.upsertUser,
   getAllUsers: userFns.getAllUsers,
+  getUsersByPractice: userFns.getUsersByPractice,
   updateUserRole: userFns.updateUserRole,
   getUserByEmail: userFns.getUserByEmail,
   createUserWithPassword: userFns.createUserWithPassword,
@@ -111,6 +114,8 @@ export const storage = {
   getPatientsByEmail: patientFns.getPatientsByEmail,
   updatePatient: patientFns.updatePatient,
   softDeletePatient: patientFns.softDeletePatient,
+  archivePatient: patientFns.archivePatient,
+  unarchivePatient: patientFns.unarchivePatient,
   getAllPatients: patientFns.getAllPatients,
   searchPatients: patientFns.searchPatients,
   countAllPatients: patientFns.countAllPatients,
@@ -265,6 +270,7 @@ export const storage = {
   getPracticePaymentSettings: paymentFns.getPracticePaymentSettings,
   upsertPracticePaymentSettings: paymentFns.upsertPracticePaymentSettings,
   getPaymentStats: paymentFns.getPaymentStats,
+  getPaymentPostingsForPeriod: paymentFns.getPaymentPostingsForPeriod,
   getPatientBalance: paymentFns.getPatientBalance,
   getPaymentPlanWithInstallments: paymentFns.getPaymentPlanWithInstallments,
   createPatientPayment: paymentFns.createPatientPayment,
@@ -310,6 +316,10 @@ export const storage = {
   countCompletedSessionsSince: progressNoteFns.countCompletedSessionsSince,
   getFirstCompletedSessionDate: progressNoteFns.getFirstCompletedSessionDate,
   getSignedSoapNotesInRange: progressNoteFns.getSignedSoapNotesInRange,
+
+  // Claim timeline events (append-only)
+  createClaimEvent: claimEventFns.createClaimEvent,
+  getClaimEvents: claimEventFns.getClaimEvents,
   createTreatmentGoal: clinicalFns.createTreatmentGoal,
   getTreatmentGoals: clinicalFns.getTreatmentGoals,
   getTreatmentGoal: clinicalFns.getTreatmentGoal,
@@ -540,6 +550,7 @@ export const storage = {
   getAuditLogsPaginated: auditFns.getAuditLogsPaginated,
   createBaaRecord: auditFns.createBaaRecord,
   getBaaRecords: auditFns.getBaaRecords,
+  getBaaRecordById: auditFns.getBaaRecordById,
   updateBaaRecord: auditFns.updateBaaRecord,
   deleteBaaRecord: auditFns.deleteBaaRecord,
   getExpiringBaaRecords: auditFns.getExpiringBaaRecords,

@@ -23,7 +23,7 @@ Medical billing and practice management platform for behavioral health / therapy
 
 ## Tech Stack
 - **Frontend:** React 18, TypeScript, TailwindCSS, Radix UI, Wouter (routing), React Query, React Hook Form + Zod
-- **Backend:** Express.js 4, Node.js 20+, TypeScript
+- **Backend:** Express.js 4, Node.js 22+ (LTS -- 20 went end-of-life 2026-03 and gets no security patches; the Docker image, CI, and `engines` all pin 22), TypeScript
 - **Database:** PostgreSQL via Drizzle ORM (AWS RDS in production, pg driver locally)
 - **Auth:** Passport.js local strategy, Argon2 hashing, express-session, MFA via TOTP
 - **Build:** Vite (client), esbuild (server), tsx (dev)
@@ -87,7 +87,7 @@ migrations/          # Drizzle SQL migrations (18 files)
 |---------|---------|---------|--------|
 | Stedi | `STEDI_API_KEY` | Eligibility, claims submission, claim status | Test key configured, sandbox verified |
 | Stripe | `STRIPE_SECRET_KEY` | Patient/practice billing | Configured |
-| Anthropic | `ANTHROPIC_API_KEY` | AI billing assistant (Claude), claim accuracy review, appeals | Configured |
+| Anthropic (via AWS Bedrock) | `AI_PROVIDER=bedrock` | AI billing assistant (Claude), claim accuracy review, appeals | Configured |
 | OpenAI | `OPENAI_API_KEY` | SOAP notes generation | Optional |
 | Twilio | `TWILIO_ACCOUNT_SID` | SMS reminders | Optional |
 | ElevenLabs | `ELEVENLABS_API_KEY` | Text-to-speech | Optional |
@@ -125,7 +125,7 @@ History: this step was added 2026-05-28 after a partial outage. Earlier docs cla
 - MFA re-verification timeout: 60 min of PHI **inactivity** for PHI/admin routes, sliding — refreshed by activity via `touchMfaSession` (`MFA_SESSION_TIMEOUT` in `server/middleware/mfa-required.ts`, override `MFA_SESSION_TIMEOUT_MS`). No regulation sets this interval; 164.312(a)(2)(iii) is addressable and speaks of inactivity.
 - MFA required for PHI access routes (HIPAA 45 CFR 164.312(d))
 - PHI encrypted at rest with AES-256-GCM (`PHI_ENCRYPTION_KEY`)
-- Rate limiting: 1000 general / 20 auth / 100 API requests per window
+- Rate limiting: general limiter on `/api` only, keyed per browser session when the request carries a valid signed session cookie (4000 / 15 min) and per IP otherwise (1000 / 15 min); 20 auth / 100 AI-API requests per window. Root-mounted MCP surfaces have their own per-IP limits: `POST /authorize/callback` 10 / 15 min, `/mcp` 120 / min (ahead of bearer auth)
 - Audit trail with tamper detection
 
 ## Deployment
@@ -178,7 +178,7 @@ DATABASE_URL=        # PostgreSQL connection string (RDS in production)
 SESSION_SECRET=      # Min 32 chars
 PHI_ENCRYPTION_KEY=  # 64-char hex (32 bytes)
 NODE_ENV=            # development or production
-ANTHROPIC_API_KEY=   # Claude API key for AI billing assistant
+AI_PROVIDER=         # bedrock (Claude via AWS Bedrock, AWS credential chain)
 STEDI_API_KEY=       # Stedi clearinghouse API key
 STRIPE_SECRET_KEY=   # Stripe payment processing
 STRIPE_PUBLISHABLE_KEY= # Stripe client-side key

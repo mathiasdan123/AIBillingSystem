@@ -4,7 +4,7 @@
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=20.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "dev": "NODE_ENV=development node --env-file=.env --import=tsx server/index.ts",
@@ -20,12 +20,20 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "docs:api": "node --import=tsx scripts/generate-openapi.ts",
-    "test:stedi-e2e": "vitest run server/__tests__/stediTestMode.e2e.test.ts"
+    "test:stedi-e2e": "vitest run server/__tests__/stediTestMode.e2e.test.ts",
+    "test:demo-provision": "vitest run server/__tests__/demoProvision.integration.test.ts",
+    "eval:soap-generation": "DATABASE_URL=postgresql://unused:unused@localhost:5432/unused node --import=tsx scripts/eval-soap-generation.ts",
+    "eval:soap-generation-pipeline": "DATABASE_URL=postgresql://unused:unused@localhost:5432/unused node --import=tsx scripts/eval-soap-generation-pipeline.ts"
   },
   "dependencies": {
     "@anthropic-ai/bedrock-sdk": "^0.32.0",
     "@anthropic-ai/sdk": "^0.115.0",
+    "@aws-sdk/client-polly": "^3.1153.0",
+    "@aws-sdk/client-s3": "^3.1153.0",
     "@aws-sdk/client-secrets-manager": "^3.1053.0",
+    "@aws-sdk/client-sesv2": "^3.1153.0",
+    "@aws-sdk/client-sns": "^3.1153.0",
+    "@aws-sdk/client-transcribe": "^3.1153.0",
     "@hookform/resolvers": "^3.10.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@neondatabase/serverless": "^0.10.4",
@@ -93,7 +101,10 @@
     "react-dom": "^18.3.1",
     "react-hook-form": "^7.55.0",
     "react-i18next": "^15.7.4",
+    "react-markdown": "^10.1.0",
     "recharts": "^2.15.2",
+    "remark-gfm": "^4.0.1",
+    "sns-validator": "^0.3.5",
     "stripe": "^22.5.0",
     "swagger-jsdoc": "^6.2.8",
     "swagger-ui-express": "^5.0.1",
@@ -123,6 +134,7 @@
     "@types/passport-local": "^1.0.38",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
+    "@types/sns-validator": "^0.3.3",
     "@types/supertest": "^7.2.0",
     "@types/swagger-jsdoc": "^6.0.4",
     "@types/swagger-ui-express": "^4.1.8",

@@ -53,6 +53,27 @@ interface RemittanceLineItem {
   payerClaimId?: string | null;
   matchType?: string | null;
   matchReviewReason?: string | null;
+  /** 835 CLP02: '4' is a payer denial. */
+  claimStatusCode?: string | null;
+  autoPostedAt?: string | null;
+  denialAppliedAt?: string | null;
+  denialError?: string | null;
+  /** Server-computed (matched lines only): this flow confirmed the line's posting right after it posted. */
+  postingConfirmed?: boolean | null;
+  /** Server-computed: a matched line this flow cannot vouch for; never applied or retried automatically. */
+  needsReview?: boolean;
+  /** Server-computed: denied, posting confirmed, denial step not completed — safe to retry. */
+  denialPending?: boolean;
+}
+
+const NEEDS_REVIEW_TEXT = "Could not confirm this line's posting. Reconcile existing payments before adding or re-matching anything.";
+
+function isPaymentUnconfirmed(item: RemittanceLineItem): boolean {
+  return item.needsReview === true;
+}
+
+function isDenialPending(item: RemittanceLineItem): boolean {
+  return item.denialPending === true;
 }
 
 interface RemittanceDetail extends RemittanceRecord {
@@ -63,11 +84,28 @@ interface RemittanceDetail extends RemittanceRecord {
 interface ClaimSearchResult {
   id: number;
   claimNumber: string | null;
-  patientFirstName: string;
-  patientLastName: string;
+  patientId?: number;
+  patientFirstName: string | null;
+  patientLastName: string | null;
   totalAmount: string;
+  /** The CLAIM's status (draft, submitted, denied, ...), not a remittance status. */
   status: string;
   createdAt: string;
+}
+
+/** A claim's own status for the match dialog; StatusBadge above is for remittance / line statuses. */
+function ClaimStatusBadge({ status }: { status: string }) {
+  const tone: Record<string, string> = {
+    draft: 'bg-slate-100 text-slate-700',
+    held: 'bg-amber-100 text-amber-800',
+    submitted: 'bg-blue-100 text-blue-800',
+    partial: 'bg-blue-100 text-blue-800',
+    paid: 'bg-green-100 text-green-800',
+    denied: 'bg-red-100 text-red-800',
+    appeal: 'bg-purple-100 text-purple-800',
+  };
+  const label = status ? status.charAt(0).toUpperCase() + status.slice(1) : 'Unknown';
+  return <Badge className={`${tone[status] ?? 'bg-gray-100 text-gray-800'} hover:bg-inherit`} data-testid={`claim-status-${status}`}>{label}</Badge>;
 }
 
 interface PaginatedResponse<T> {
@@ -242,14 +280,50 @@ export default function Remittance() {
     },
   });
 
+  // Re-runs ONLY the denial step (claim status, appeal draft, follow-up) for
+  // a posted denied line; the server never posts money from this route.
+  const retryDenialMutation = useMutation({
+    mutationFn: async ({ remittanceId, lineItemId }: { remittanceId: number; lineItemId: number }) => {
+      const response = await apiRequest('POST', `/api/remittance/${remittanceId}/line-items/${lineItemId}/retry-denial`);
+      return response.json();
+    },
+    onSuccess: (data: any) => {
+      toast({
+        title: data?.partial ? "Denial still pending" : "Denial applied",
+        description: data?.message || "Denial applied to the claim",
+        variant: data?.partial ? "destructive" : "default",
+      });
+      queryClient.invalidateQueries({ queryKey: ['/api/remittance'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
+      if (selectedRemittance) {
+        loadRemittanceDetail(selectedRemittance.id);
+      }
+    },
+    onError: (error: Error) => {
+      if (isUnauthorizedError(error)) return;
+      toast({ title: "Denial retry failed", description: error.message, variant: "destructive" });
+    },
+  });
+
   const manualMatchMutation = useMutation({
     mutationFn: async ({ remittanceId, lineItemId, claimId }: { remittanceId: number; lineItemId: number; claimId: number }) => {
       const response = await apiRequest('POST', `/api/remittance/${remittanceId}/line-items/${lineItemId}/match`, { claimId });
       return response.json();
     },
-    onSuccess: () => {
-      toast({ title: "Success", description: "Line item matched to claim" });
+    onSuccess: (data: any) => {
+      toast({
+        title: data?.needsReview
+          ? "Matched — needs manual review"
+          : data?.partial
+            ? "Matched — denial step needs a retry"
+            : data?.denied || data?.claimStatus === 'denied'
+              ? "Matched — claim denied by payer"
+              : "Success",
+        description: data?.message || "Line item matched to claim",
+        variant: data?.partial || data?.needsReview ? "destructive" : "default",
+      });
       queryClient.invalidateQueries({ queryKey: ['/api/remittance'] });
+      queryClient.invalidateQueries({ queryKey: ['/api/claims'] });
       setShowManualMatchDialog(false);
       setMatchingLineItem(null);
       if (selectedRemittance) {
@@ -705,6 +779,26 @@ export default function Remittance() {
                                 {reviewReasonLabel(item.matchReviewReason)}
                               </div>
                             </div>
+                          ) : isPaymentUnconfirmed(item) ? (
+                            <div data-testid={`payment-unconfirmed-${item.id}`}>
+                              <Badge className="bg-red-100 text-red-800 hover:bg-red-100">
+                                <AlertCircle className="w-3 h-3 mr-1" /> Needs manual review
+                              </Badge>
+                              <div className="text-xs text-red-700 mt-1 max-w-[180px]">
+                                {NEEDS_REVIEW_TEXT}
+                                {item.claimStatusCode === '4' && !item.denialAppliedAt ? " The payer's denial was not applied." : ''}
+                              </div>
+                            </div>
+                          ) : isDenialPending(item) ? (
+                            <div data-testid={`denial-pending-${item.id}`}>
+                              <Badge className="bg-red-100 text-red-800 hover:bg-red-100">
+                                <AlertCircle className="w-3 h-3 mr-1" /> Denial pending
+                              </Badge>
+                              <div className="text-xs text-red-700 mt-1 max-w-[180px]">
+                                Payment recorded; the payer's denial has not reached the claim yet.
+                                {item.denialError ? ` Last error: ${item.denialError}` : ''}
+                              </div>
+                            </div>
                           ) : (
                             <StatusBadge status={item.status} />
                           )}
@@ -717,6 +811,19 @@ export default function Remittance() {
                               onClick={() => openManualMatch(item)}
                             >
                               <Link2 className="w-3 h-3 mr-1" /> Match
+                            </Button>
+                          )}
+                          {isDenialPending(item) && selectedRemittance && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="mb-1"
+                              data-testid={`retry-denial-${item.id}`}
+                              disabled={retryDenialMutation.isPending}
+                              onClick={() => retryDenialMutation.mutate({ remittanceId: selectedRemittance.id, lineItemId: item.id })}
+                            >
+                              {retryDenialMutation.isPending ? <Loader2 className="w-3 h-3 mr-1 animate-spin" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+                              Retry denial
                             </Button>
                           )}
                           {item.status === 'matched' && item.claimId && (
@@ -772,7 +879,7 @@ export default function Remittance() {
 
       {/* ==================== Manual Match Dialog ==================== */}
       <Dialog open={showManualMatchDialog} onOpenChange={setShowManualMatchDialog}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Match Line Item to Claim</DialogTitle>
             <DialogDescription>
@@ -807,7 +914,8 @@ export default function Remittance() {
                   claimSearchResults.map((claim) => (
                     <div
                       key={claim.id}
-                      className="border rounded-lg p-3 hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer flex items-center justify-between"
+                      className="border rounded-lg p-3 hover:bg-blue-50 dark:hover:bg-blue-900/20 cursor-pointer flex items-center justify-between gap-3"
+                      data-testid={`claim-search-result-${claim.id}`}
                       onClick={() => {
                         if (selectedRemittance && matchingLineItem) {
                           manualMatchMutation.mutate({
@@ -818,19 +926,18 @@ export default function Remittance() {
                         }
                       }}
                     >
-                      <div>
-                        <p className="font-medium text-sm">
-                          {claim.patientFirstName} {claim.patientLastName}
+                      <div className="min-w-0">
+                        <p className="font-medium text-sm truncate">
+                          {[claim.patientFirstName, claim.patientLastName].filter(Boolean).join(' ') || 'Unknown patient'}
                         </p>
-                        <p className="text-xs text-slate-500">
-                          {claim.claimNumber ? `Claim #${claim.claimNumber}` : `ID: ${claim.id}`}
-                          {' - '}
-                          {formatCurrency(claim.totalAmount)}
-                          {' - '}
-                          <StatusBadge status={claim.status} />
+                        <p className="text-xs text-slate-500 break-words flex flex-wrap items-center gap-x-1 gap-y-1">
+                          <span>{claim.claimNumber ? `Claim #${claim.claimNumber}` : `ID: ${claim.id}`}</span>
+                          <span>·</span>
+                          <span>{formatCurrency(claim.totalAmount)}</span>
+                          <ClaimStatusBadge status={claim.status} />
                         </p>
                       </div>
-                      <ArrowRight className="w-4 h-4 text-slate-400" />
+                      <ArrowRight className="w-4 h-4 text-slate-400 shrink-0" />
                     </div>
                   ))
                 ) : claimSearchTerm.length >= 2 ? (

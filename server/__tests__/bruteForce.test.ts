@@ -5,6 +5,7 @@ import type { Request, Response, NextFunction } from 'express';
 vi.mock('../services/redisClient', () => ({
   getRedisClient: vi.fn(() => null),
   isRedisReady: vi.fn(() => false),
+  isRedisConfigured: vi.fn(() => false),
   initRedisClient: vi.fn(() => null),
   shutdownRedis: vi.fn(),
 }));
@@ -131,5 +132,49 @@ describe('Brute Force Protection', () => {
       expect(elapsed).toBeGreaterThanOrEqual(1900); // ~2s delay
       expect((req as any).siegeMode).toBe(true);
     }, 5000);
+  });
+
+  describe('regression: 2026-10-25-style Redis/memory flap', () => {
+    it('isSiegeMode keeps reading the Redis counter after isRedisReady flaps false between calls', async () => {
+      // incrementGlobalFailedAuth (a failed login) and isSiegeMode (checked
+      // on the next auth request) are separate calls, often separate HTTP
+      // requests. Before the fix, both gated on isRedisReady() independently
+      // -- a transient error/close event between the two would make the
+      // read silently check the empty in-memory fallback instead of the
+      // Redis counter the write actually landed in, undercounting failed
+      // logins and delaying siege mode. isRedisConfigured() is stable
+      // across that exact blip.
+      const redisModule = await import('../services/redisClient');
+      let redisCount = 0;
+      const fakeRedis = {
+        pipeline: () => ({
+          incr: vi.fn(),
+          ttl: vi.fn(),
+          exec: vi.fn(async () => {
+            redisCount++;
+            return [[null, redisCount], [null, -1]];
+          }),
+        }),
+        expire: vi.fn(async () => 1),
+        get: vi.fn(async () => String(redisCount)),
+      };
+
+      vi.mocked(redisModule.getRedisClient).mockReturnValue(fakeRedis as any);
+      vi.mocked(redisModule.isRedisConfigured).mockReturnValue(true);
+
+      // Writes happen while isRedisReady() reads true.
+      vi.mocked(redisModule.isRedisReady).mockReturnValue(true);
+      for (let i = 0; i < 50; i++) {
+        await incrementGlobalFailedAuth();
+      }
+
+      // A transient blip flips isRedisReady() false before the read.
+      vi.mocked(redisModule.isRedisReady).mockReturnValue(false);
+      expect(await isSiegeMode()).toBe(true);
+
+      vi.mocked(redisModule.getRedisClient).mockReturnValue(null);
+      vi.mocked(redisModule.isRedisConfigured).mockReturnValue(false);
+      vi.mocked(redisModule.isRedisReady).mockReturnValue(false);
+    });
   });
 });

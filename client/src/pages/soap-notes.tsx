@@ -26,13 +26,18 @@ import { TextToSpeech } from "@/components/TextToSpeech";
 import { apiRequest, queryClient, streamRequest } from "@/lib/queryClient";
 import { parsePlanSuggestion } from "@/lib/planSuggestion";
 import { extractSoapPreview } from "@/lib/soapPreview";
+import { sumTimeBlockRates } from "@/lib/timeBlocks";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/useAuth";
 import { useSoapDraft } from "@/hooks/useSoapDraft";
+import { fromDraftBilling, toDraftBilling } from "@/lib/soapDraftBilling";
+import { applyRatingsToAllActivities, buildRequestAssessment, mergeGlobalAssessment } from "@/lib/soapRatings";
+import { derivePracticeUnitRate, describeUnitRate } from "@/lib/practiceRate";
 import { DraftSavedIndicator } from "@/components/DraftSavedIndicator";
 import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
 import { type ActivityCptPairing, cptNameFor, reconcileCptCodesWithPairings } from "@shared/activityCpt";
 import ActivityCptPairingEditor from "@/components/ActivityCptPairingEditor";
+import GeneratedSoapSection, { type SoapSectionKey } from "@/components/GeneratedSoapSection";
 
 // ============================================
 // FEATURE FLAGS
@@ -66,7 +71,7 @@ const TARGETED_SKILLS = [
   "Graphomotor", "Tool Use", "Praxis / Sequencing", "Self-Advocacy / Interoception"
 ];
 
-// All activities organized by category (NO CPT codes shown - AI determines optimal billing)
+// All activities organized by category (NO CPT codes shown - AI suggests codes for provider review)
 // Seeded from the practice's existing OT + ST exercise library (April 2026).
 // AI billing logic infers the right CPT family from the activity suffix
 // (- Strength → 97110, - Coordination → 97112, - Functional → 97530,
@@ -258,7 +263,10 @@ export default function SoapNotes() {
   const [duration, setDuration] = useState(45); // Standard session length
   const [sessionType, setSessionType] = useState("treatment"); // treatment, initial_eval, re_eval
   const [location, setLocation] = useState("Sensory Gym");
-  const [ratePerUnit, setRatePerUnit] = useState(DEFAULT_UNIT_RATE); // $289 per 15-min unit
+  const [ratePerUnit, setRatePerUnit] = useState(DEFAULT_UNIT_RATE); // replaced by the practice rate once /api/cpt-codes loads
+  // True once the admin typed a rate by hand; the practice-rate pre-fill
+  // never overwrites a manual value.
+  const [rateTouched, setRateTouched] = useState(false);
 
   // Prefill from the calendar: "Write Session Note" on an appointment links
   // here with the visit's patient and date, so the therapist does not have to
@@ -320,6 +328,16 @@ export default function SoapNotes() {
 
   // AI Generated content
   const [isGenerating, setIsGenerating] = useState(false);
+  // Demo-only test fixture (therapybill-qa #2): lets a demo user run the
+  // rule-based fallback generator instead of the AI. The server honours the
+  // flag only for demo practices; the checkbox is only rendered for them.
+  const [forceFallback, setForceFallback] = useState(false);
+  const { data: currentPractice } = useQuery<any>({
+    queryKey: ["/api/practices", user?.practiceId],
+    enabled: !!user?.practiceId,
+    retry: false,
+  });
+  const isDemoPractice = currentPractice?.isDemo === true;
   // Live preview text assembled from streamed SOAP deltas while generating.
   const [streamPreview, setStreamPreview] = useState("");
   const [generatedNote, setGeneratedNote] = useState<{
@@ -381,29 +399,41 @@ export default function SoapNotes() {
     clear: clearDraft,
     lastSavedAt: draftLastSavedAt,
     isSaving: draftSaving,
+    error: draftError,
   } = useSoapDraft({
     patientId: selectedPatient,
     onRestore: (draft) => {
       if (draft.subjective || draft.objective || draft.assessment || draft.plan) {
-        // Reset CPT/billing fields explicitly — never carry over from the
-        // previous patient's note. If billing data is needed for this draft,
-        // the user re-runs "Generate".
+        // Billing comes back from THIS patient's draft (the draft is keyed by
+        // therapist + patient), never carried over from the previous
+        // patient's in-memory note. A draft saved before the billing column
+        // existed restores with empty billing, exactly as before.
         setGeneratedNote({
           subjective: draft.subjective ?? "",
           objective: draft.objective ?? "",
           assessment: draft.assessment ?? "",
           plan: draft.plan ?? "",
-          cptCodes: [],
-          activityCptPairings: [],
-          totalReimbursement: 0,
-          billingRationale: "",
-          auditNotes: [],
-          timeBlocks: [],
+          ...fromDraftBilling(draft.billing),
         });
         generatedNoteForPatientRef.current = selectedPatient;
       }
     },
   });
+
+  // Surface autosave failures instead of swallowing them (therapybill-qa #3):
+  // useSoapDraft only records the error in state, and until now nothing on
+  // the page read it, so a draft endpoint that fails on every call looked
+  // identical to one that never ran. The hook clears `error` at the start of
+  // each attempt, so a repeat failure re-fires this effect.
+  useEffect(() => {
+    if (!draftError) return;
+    toast({
+      title: "Draft not saved",
+      description:
+        "Your note is still on this page but the autosave failed. Copy anything important before leaving, then try again.",
+      variant: "destructive",
+    });
+  }, [draftError, toast]);
 
   // Autosave the generated SOAP whenever it changes. Only fires when the
   // current generatedNote was actually produced for the current selectedPatient
@@ -419,12 +449,22 @@ export default function SoapNotes() {
       plan: generatedNote.plan,
       location,
       sessionType,
+      // Codes, pairings, time blocks, rationale and total ride along so the
+      // review state survives a trip to another page (QA 2026-11-18).
+      billing: toDraftBilling(generatedNote),
     });
   }, [
     generatedNote?.subjective,
     generatedNote?.objective,
     generatedNote?.assessment,
     generatedNote?.plan,
+    // Billing edits (pairing changes re-derive codes/blocks/total) must
+    // re-arm the autosave too, or the draft keeps the pre-edit codes.
+    generatedNote?.cptCodes,
+    generatedNote?.activityCptPairings,
+    generatedNote?.timeBlocks,
+    generatedNote?.billingRationale,
+    generatedNote?.totalReimbursement,
     selectedPatient,
     saveDraft,
     location,
@@ -493,6 +533,14 @@ export default function SoapNotes() {
     queryKey: ["/api/cpt-codes"],
     retry: false,
   });
+
+  // Pre-fill Rate/Unit with the practice's configured charge for the session
+  // type's codes (the number generation will actually bill), falling back to
+  // the flat estimate. A hand-typed rate is never overwritten.
+  useEffect(() => {
+    if (rateTouched) return;
+    setRatePerUnit(derivePracticeUnitRate(cptCodes, sessionType).rate);
+  }, [cptCodes, sessionType, rateTouched]);
 
   const { data: existingSoapNotes } = useQuery<SoapNote[]>({
     queryKey: ["/api/soap-notes"],
@@ -779,12 +827,17 @@ export default function SoapNotes() {
     field: keyof ActivityAssessment,
     value: string,
   ) => {
-    setSelectedActivities(prev =>
-      prev.map(a => a.name === activityName
-        ? { ...a, assessment: { ...a.assessment, [field]: value } }
-        : a
-      )
+    const next = selectedActivities.map(a => a.name === activityName
+      ? { ...a, assessment: { ...a.assessment, [field]: value } }
+      : a
     );
+    setSelectedActivities(next);
+    // Deliberately NOT mirrored into the global `assessment` state. The
+    // global fields hold only what the therapist set on the global controls;
+    // the per-exercise values are derived at request time
+    // (buildRequestAssessment) and for display (effectiveAssessment). Review
+    // on #471: mirroring made the derived value look typed, so a later
+    // Apply to All could never update it (Minimal → Moderate stayed Minimal).
   };
 
   // Pre-sign documentation check (clinician feedback): pass/warn checklist for
@@ -835,6 +888,17 @@ export default function SoapNotes() {
   // One-level undo keeps the therapist in control of every AI edit.
   const [docCheckAnswers, setDocCheckAnswers] = useState<Record<string, string>>({});
   const [weaving, setWeaving] = useState(false);
+
+  // Sections the therapist has hand-edited since the last generation. Shown
+  // as an "Edited by therapist" badge so reviewers can tell therapist text
+  // from model text. An edit writes straight into generatedNote, which is
+  // what Save, the autosaved draft, the doc-check and the TTS all read — so
+  // the edited text is the text that gets stored. Cleared on regeneration.
+  const [therapistEditedSections, setTherapistEditedSections] = useState<Set<SoapSectionKey>>(new Set());
+  const saveSectionEdit = (key: SoapSectionKey, text: string) => {
+    setGeneratedNote((prev) => (prev ? { ...prev, [key]: text } : prev));
+    setTherapistEditedSections((prev) => new Set(prev).add(key));
+  };
   const [weaveChanges, setWeaveChanges] = useState<Array<{ section: string; summary: string }> | null>(null);
   const weaveBackupRef = useRef<{ subjective: string; objective: string; assessment: string; plan: string } | null>(null);
 
@@ -1025,9 +1089,12 @@ export default function SoapNotes() {
     // Check if at least one field is set
     const hasValue = Object.values(applyToAllAssessment).some(v => v !== "");
     if (!hasValue) return;
-    setSelectedActivities(prev =>
-      prev.map(a => ({ ...a, assessment: { ...applyToAllAssessment } }))
-    );
+    const applied = applyRatingsToAllActivities(selectedActivities, applyToAllAssessment);
+    setSelectedActivities(applied);
+    // Not mirrored into the global `assessment` state (see
+    // updateActivityAssessment): the generate request derives a blank global
+    // field from these per-exercise values every time, so a second Apply to
+    // All with a different level is what gets sent.
   };
 
   // Helper to check if activity is selected
@@ -1086,22 +1153,28 @@ export default function SoapNotes() {
           activityAssessments: selectedActivities, // Full activity objects with assessments
           additionalTherapies: selectedTherapies.length > 0 ? selectedTherapies : undefined,
           interventions: selectedInterventions.length > 0 ? selectedInterventions : undefined,
-          mood: mood || "Cooperative",
+          // Do NOT substitute plausible-sounding defaults for blank fields here
+          // (e.g. motorPlanning: "Mild Difficulty" when the therapist left it
+          // unset). The AI prompt can't tell a real observation from a client
+          // placeholder -- it faithfully narrates whatever arrives as fact,
+          // so a fake default here becomes a fabricated clinical finding in
+          // the generated note. Send blanks as empty strings; the prompt
+          // builder (aiSoapBillingService.ts) turns an empty field into an
+          // explicit "not assessed" instruction instead of a stated fact.
+          mood: mood,
           caregiverReport: caregiverReport || undefined,
           duration,
           sessionType,
           location,
-          assessment: {
-            performance: assessment.performance || "Stable",
-            assistance: assessment.assistance || "Minimal Assist",
-            strength: assessment.strength || "Adequate",
-            motorPlanning: assessment.motorPlanning || "Mild Difficulty",
-            sensoryRegulation: assessment.sensoryRegulation || "Needed Minimal Supports"
-          },
-          planNextSteps: planNextSteps || "Continue Current Goals",
+          // Global ratings, with any blank field filled from the per-exercise
+          // ratings when every rated exercise agrees (buildRequestAssessment).
+          // The per-exercise ratings themselves travel in activityAssessments.
+          assessment: buildRequestAssessment(assessment, selectedActivities),
+          planNextSteps: planNextSteps,
           nextSessionFocus: nextSessionFocus,
           homeProgram: homeProgram || undefined,
-          ratePerUnit: ratePerUnit // Manual rate override
+          ratePerUnit: ratePerUnit, // Manual rate override
+          ...(isDemoPractice && forceFallback ? { forceFallback: true } : {}),
         },
         {
           onDelta: (t) => {
@@ -1156,6 +1229,7 @@ export default function SoapNotes() {
               auditNotes: aiResponse.auditNotes || [],
               generationMode: aiResponse.generationMode || "ai"
             });
+            setTherapistEditedSections(new Set());
             generatedNoteForPatientRef.current = selectedPatient;
 
             toast({
@@ -1196,7 +1270,6 @@ export default function SoapNotes() {
         const res = await apiRequest("POST", "/api/patients", {
           firstName: newPatientData.firstName.trim(),
           lastName: newPatientData.lastName.trim(),
-          dateOfBirth: "2000-01-01",
         });
         const newPatient = await res.json();
         patientId = newPatient.id;
@@ -1210,6 +1283,16 @@ export default function SoapNotes() {
 
       const primaryCode = generatedNote.cptCodes[0]?.code || "97530";
 
+      // A treatment session row stores exactly one CPT code, but the AI may
+      // suggest several (e.g. 97530 + 97112). Only this primary code's own
+      // units are billed -- summing every suggested code's units onto this
+      // one code would bill units that were actually performed under a
+      // DIFFERENT procedure, inflating this code's billed count beyond what
+      // was done. That's a real billing-accuracy/upcoding risk, not just a
+      // display mismatch, so the conservative fix is to bill only what this
+      // code's own units support, not the combined total across all codes.
+      // (The other suggested codes' time isn't billed by this flow today --
+      // see the generate-claim follow-up for making that explicit to the user.)
       const sessionData = {
         patientId,
         therapistId: user?.id || "",
@@ -1217,7 +1300,7 @@ export default function SoapNotes() {
         duration,
         cptCodeId: cptCodes?.find(c => c.code === primaryCode)?.id || 1,
         icd10CodeId: 1,
-        units: (generatedNote.cptCodes || []).reduce((sum, c) => sum + c.units, 0),
+        units: generatedNote.cptCodes?.[0]?.units || 1,
         notes: `SUBJECTIVE:\n${generatedNote.subjective}\n\nOBJECTIVE:\n${generatedNote.objective}\n\nASSESSMENT:\n${generatedNote.assessment}\n\nPLAN:\n${generatedNote.plan}`,
         status: "completed",
         dataSource: "ai_generated",
@@ -1269,21 +1352,33 @@ export default function SoapNotes() {
       // Auto-generate claim for the session
       try {
         const claimResponse = await apiRequest("POST", `/api/sessions/${session.id}/generate-claim`, {});
-        const claim = await claimResponse.json();
-        return { session, claim, savedSoapNote };
+        // The endpoint returns { message, claim, lineItems, superbillDetails }
+        // -- the claim itself is nested under .claim, not the response body
+        // directly. Reading claimNumber/totalAmount off the unwrapped body
+        // (as this used to) silently rendered "Claim undefined created for
+        // $undefined" in the success toast below.
+        const claimResult = await claimResponse.json();
+        return { session, claim: claimResult.claim, superbillDetails: claimResult.superbillDetails, savedSoapNote };
       } catch (claimError) {
         // Claim generation failed but SOAP note saved - return session only
         console.error("Auto-claim generation failed:", claimError);
-        return { session, claim: null, savedSoapNote };
+        return { session, claim: null, superbillDetails: null, savedSoapNote };
       }
     },
     onSuccess: (result) => {
       const hasClaim = result?.claim && !result.claim.error;
+      const sb = result?.superbillDetails;
+      // Multi-code claims (sb.lineItems) have no single cptCode/units/rate to
+      // name -- summarize by procedure count instead.
+      const claimNumber = result?.claim?.claimNumber;
+      const claimDescription = sb?.lineItems?.length > 1
+        ? `Claim ${claimNumber}: ${sb.lineItems.length} procedure codes (${sb.lineItems.map((li: any) => li.cptCode).join(', ')}) totaling $${sb.totalAmount}. Ready for submission.`
+        : sb
+          ? `Claim ${claimNumber}: ${sb.units} unit(s) of ${sb.cptCode} at $${Number(sb.rate).toFixed(2)}/unit = $${sb.totalAmount}. Ready for submission.`
+          : `Claim ${claimNumber} created for $${result?.claim?.totalAmount}. Ready for submission.`;
       toast({
         title: hasClaim ? "SOAP Note Saved & Claim Created" : "SOAP Note Saved",
-        description: hasClaim
-          ? `Claim ${result.claim.claimNumber} created for $${result.claim.totalAmount}. Ready for submission.`
-          : "Session documented. Claim can be generated from the Claims page.",
+        description: hasClaim ? claimDescription : "Session documented. Claim can be generated from the Claims page.",
       });
       queryClient.invalidateQueries({ queryKey: ["/api/soap-notes"] });
       queryClient.invalidateQueries({ queryKey: ["/api/sessions"] });
@@ -1353,7 +1448,7 @@ export default function SoapNotes() {
               Pediatric OT Documentation
             </h1>
             <p className="text-muted-foreground mt-1">
-              Select activities performed &rarr; AI generates notes & optimal billing codes
+              Select activities performed &rarr; AI drafts the note and suggests billing codes for your review
             </p>
           </div>
           <Button
@@ -1610,9 +1705,9 @@ export default function SoapNotes() {
                     <Label className="text-xs text-muted-foreground">Session Type</Label>
                     <Select value={sessionType} onValueChange={(v) => {
                       setSessionType(v);
-                      if (v === 'initial_eval') setRatePerUnit(550);
-                      else if (v === 're_eval') setRatePerUnit(400);
-                      else setRatePerUnit(DEFAULT_UNIT_RATE);
+                      // Rate follows the session type via the practice-rate
+                      // effect above (practice charge when configured, else
+                      // the flat estimate) unless the admin typed one.
                     }}>
                       <SelectTrigger className="mt-1">
                         <SelectValue />
@@ -1644,11 +1739,27 @@ export default function SoapNotes() {
                       <Input
                         type="number"
                         value={ratePerUnit}
-                        onChange={(e) => setRatePerUnit(parseFloat(e.target.value) || DEFAULT_UNIT_RATE)}
+                        onChange={(e) => {
+                          // Empty or 0 means "no manual rate": fall back to the
+                          // derived practice rate rather than pinning the flat
+                          // estimate as "Entered manually" (review on #471).
+                          const typed = parseFloat(e.target.value);
+                          if (!Number.isFinite(typed) || typed <= 0) {
+                            setRateTouched(false);
+                            setRatePerUnit(derivePracticeUnitRate(cptCodes, sessionType).rate);
+                          } else {
+                            setRateTouched(true);
+                            setRatePerUnit(typed);
+                          }
+                        }}
                         className="mt-1"
                         min={0}
                         step={0.01}
+                        data-testid="input-rate-per-unit"
                       />
+                      <p className="text-[10px] text-muted-foreground mt-1" data-testid="rate-per-unit-source">
+                        {rateTouched ? "Entered manually" : describeUnitRate(derivePracticeUnitRate(cptCodes, sessionType))}
+                      </p>
                     </div>
                   )}
                 </div>
@@ -1662,17 +1773,30 @@ export default function SoapNotes() {
                   </div>
                 )}
 
-                {/* Billing Summary - Admin Only */}
-                {isAdmin && (
+                {/* Billing Summary - Admin Only. This is a rough pre-generation
+                    guide only -- a flat rate over the full session duration,
+                    before the AI has determined the actual codes/units for
+                    this visit (which may split across multiple codes at their
+                    own practice rates, or use fewer units than available).
+                    Hidden once a note exists: the accurate, per-code total in
+                    "Suggested Billing Codes" below replaces it -- showing both
+                    at once left two unreconciled dollar figures on screen at
+                    the same time (a flat pre-generation guess next to the
+                    real per-code total), which is worse than showing neither
+                    until the real number exists. */}
+                {isAdmin && !generatedNote && (
                   <div className="mt-3 p-3 bg-green-50 rounded-lg border border-green-200">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-muted-foreground">
                         {Math.floor(duration / 15)} units × ${ratePerUnit.toFixed(2)}/unit
                       </span>
                       <span className="font-bold text-green-700">
-                        Est. Total: ${(Math.floor(duration / 15) * ratePerUnit).toFixed(2)}
+                        Rough Est.: ${(Math.floor(duration / 15) * ratePerUnit).toFixed(2)}
                       </span>
                     </div>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      A starting guide based on full session duration -- the actual billed amount (per code, at your practice's configured rates) will appear after you generate the note.
+                    </p>
                   </div>
                 )}
 
@@ -2248,10 +2372,23 @@ export default function SoapNotes() {
                   <summary className="text-xs text-purple-700 cursor-pointer select-none hover:underline mb-2">
                     Optional overall ratings
                   </summary>
+                {/* Shown values are the per-exercise ratings when every rated
+                    exercise agrees (derived on every render, never written into
+                    the global state); choosing a value here overrides them. */}
+                {(() => {
+                  const effective = mergeGlobalAssessment(assessment, selectedActivities);
+                  const derived = (["performance", "assistance", "strength", "motorPlanning", "sensoryRegulation"] as const)
+                    .filter((f) => !assessment[f] && effective[f]);
+                  return derived.length > 0 ? (
+                    <p className="text-[10px] text-muted-foreground mb-1" data-testid="overall-ratings-derived-hint">
+                      Filled from the per-exercise ratings; choose a value here to override.
+                    </p>
+                  ) : null;
+                })()}
                 <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-2">
                   <div>
                     <Label className="text-xs text-muted-foreground">Performance</Label>
-                    <Select value={assessment.performance} onValueChange={(v) => setAssessment({...assessment, performance: v})}>
+                    <Select value={mergeGlobalAssessment(assessment, selectedActivities).performance} onValueChange={(v) => setAssessment({...assessment, performance: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
@@ -2264,7 +2401,7 @@ export default function SoapNotes() {
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">Assistance</Label>
-                    <Select value={assessment.assistance} onValueChange={(v) => setAssessment({...assessment, assistance: v})}>
+                    <Select value={mergeGlobalAssessment(assessment, selectedActivities).assistance} onValueChange={(v) => setAssessment({...assessment, assistance: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
@@ -2277,7 +2414,7 @@ export default function SoapNotes() {
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">Strength</Label>
-                    <Select value={assessment.strength} onValueChange={(v) => setAssessment({...assessment, strength: v})}>
+                    <Select value={mergeGlobalAssessment(assessment, selectedActivities).strength} onValueChange={(v) => setAssessment({...assessment, strength: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
@@ -2290,7 +2427,7 @@ export default function SoapNotes() {
                   </div>
                   <div>
                     <Label className="text-xs text-muted-foreground">Motor Planning</Label>
-                    <Select value={assessment.motorPlanning} onValueChange={(v) => setAssessment({...assessment, motorPlanning: v})}>
+                    <Select value={mergeGlobalAssessment(assessment, selectedActivities).motorPlanning} onValueChange={(v) => setAssessment({...assessment, motorPlanning: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
@@ -2303,7 +2440,7 @@ export default function SoapNotes() {
                   </div>
                   <div className="md:col-span-2">
                     <Label className="text-xs text-muted-foreground">Sensory Regulation</Label>
-                    <Select value={assessment.sensoryRegulation} onValueChange={(v) => setAssessment({...assessment, sensoryRegulation: v})}>
+                    <Select value={mergeGlobalAssessment(assessment, selectedActivities).sensoryRegulation} onValueChange={(v) => setAssessment({...assessment, sensoryRegulation: v})}>
                       <SelectTrigger className="mt-1 text-xs">
                         <SelectValue placeholder="Select" />
                       </SelectTrigger>
@@ -2480,6 +2617,25 @@ export default function SoapNotes() {
               </Card>
             )}
 
+            {isDemoPractice && (
+              <label
+                className="flex items-start gap-2 rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
+                data-testid="demo-force-fallback"
+              >
+                <input
+                  type="checkbox"
+                  className="mt-0.5"
+                  checked={forceFallback}
+                  onChange={(e) => setForceFallback(e.target.checked)}
+                />
+                <span>
+                  <span className="font-medium">Demo test fixture:</span> generate with the rule-based
+                  fallback instead of the AI. This is what every practice gets if the AI is unavailable.
+                  Only shown in the demo practice.
+                </span>
+              </label>
+            )}
+
             {/* Generate Button */}
             <Button
               onClick={generateNoteAndCodes}
@@ -2521,7 +2677,11 @@ export default function SoapNotes() {
           <div className="space-y-4" id="generated-note-section">
             {generatedNote ? (
               <>
-                <DraftSavedIndicator saving={draftSaving} lastSavedAt={draftLastSavedAt} />
+                <DraftSavedIndicator
+                  saving={draftSaving}
+                  lastSavedAt={draftLastSavedAt}
+                  error={draftError}
+                />
                 {generatedNote.generationMode === "fallback" && (
                   <Alert className="border-amber-300 bg-amber-50">
                     <AlertTriangle className="h-4 w-4 text-amber-600" />
@@ -2582,7 +2742,7 @@ export default function SoapNotes() {
                         <div className="p-2 bg-blue-50 rounded-lg">
                           <div className="flex items-center gap-1 mb-1">
                             <Lightbulb className="w-3 h-3 text-blue-600" />
-                            <span className="text-xs font-medium text-blue-700">AI Billing Strategy</span>
+                            <span className="text-xs font-medium text-blue-700">AI Coding Rationale</span>
                           </div>
                           <p className="text-xs text-muted-foreground">{generatedNote.billingRationale}</p>
                         </div>
@@ -2642,7 +2802,7 @@ export default function SoapNotes() {
                                 setGeneratedNote({
                                   ...generatedNote,
                                   timeBlocks: updatedBlocks,
-                                  totalReimbursement: updatedBlocks.reduce((sum, b) => sum + b.rate, 0)
+                                  totalReimbursement: sumTimeBlockRates(updatedBlocks)
                                 });
                               }}
                             >
@@ -2668,11 +2828,22 @@ export default function SoapNotes() {
                         <>
                           <Separator className="my-3" />
                           <div className="flex items-center justify-between text-sm">
+                            {/* Each block above already shows its own correct
+                                rate (per-code practice rate where configured,
+                                set alongside the fix for the "Suggested
+                                Billing Codes" total). This summary used to
+                                recompute blocks.length * a single flat rate
+                                instead of summing the blocks' own rates --
+                                reproducing a flat-rate total here even after
+                                the main total elsewhere was fixed to use
+                                real per-code rates. sumTimeBlockRates is the
+                                one place this is computed now, so both call
+                                sites in this view can't drift apart again. */}
                             <span className="text-muted-foreground">
-                              {generatedNote.timeBlocks.length} blocks × ${ratePerUnit.toFixed(2)}
+                              {generatedNote.timeBlocks.length} block{generatedNote.timeBlocks.length === 1 ? '' : 's'}
                             </span>
                             <span className="font-bold text-green-700">
-                              Total: ${(generatedNote.timeBlocks.length * ratePerUnit).toFixed(2)}
+                              Total: ${sumTimeBlockRates(generatedNote.timeBlocks).toFixed(2)}
                             </span>
                           </div>
                         </>
@@ -2697,34 +2868,64 @@ export default function SoapNotes() {
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3 text-sm">
-                    <div>
-                      <Label className="text-xs font-semibold text-blue-600">SUBJECTIVE</Label>
-                      <p className="mt-1 text-foreground">{generatedNote.subjective}</p>
-                    </div>
+                    {/* Every section is therapist-editable in place (QA sweep
+                        2026-11-18: these were read-only paragraphs while the
+                        doc-check copy below said "edit the sections above").
+                        Edits land in generatedNote, so Save / draft / sign
+                        store what the therapist approved, not what the model
+                        drafted. */}
+                    <GeneratedSoapSection
+                      sectionKey="subjective"
+                      label="SUBJECTIVE"
+                      labelClassName="text-blue-600"
+                      value={generatedNote.subjective}
+                      edited={therapistEditedSections.has("subjective")}
+                      onSave={(t) => saveSectionEdit("subjective", t)}
+                      disabled={weaving}
+                    />
                     <Separator />
-                    <div>
-                      <Label className="text-xs font-semibold text-green-600">OBJECTIVE</Label>
-                      <p className="mt-1 text-foreground whitespace-pre-line">{generatedNote.objective}</p>
-                      {/* Per-activity CPT pairing (Megan's ask, Kelli-approved):
-                          activity description and billing code live together in
-                          the Objective; every code is therapist-editable and
-                          edits re-derive the billing codes above. */}
-                      {generatedNote.activityCptPairings && generatedNote.activityCptPairings.length > 0 && (
-                        <ActivityCptPairingEditor
-                          pairings={generatedNote.activityCptPairings}
-                          catalog={cptCodes?.map((c) => ({ id: c.id, code: c.code, description: c.description }))}
-                          onCodeChange={updateActivityPairingCode}
-                        />
-                      )}
-                    </div>
+                    <GeneratedSoapSection
+                      sectionKey="objective"
+                      label="OBJECTIVE"
+                      labelClassName="text-green-600"
+                      value={generatedNote.objective}
+                      edited={therapistEditedSections.has("objective")}
+                      onSave={(t) => saveSectionEdit("objective", t)}
+                      disabled={weaving}
+                      footer={
+                        /* Per-activity CPT pairing (Megan's ask, Kelli-approved):
+                           activity description and billing code live together in
+                           the Objective; every code is therapist-editable and
+                           edits re-derive the billing codes above. */
+                        generatedNote.activityCptPairings && generatedNote.activityCptPairings.length > 0 ? (
+                          <ActivityCptPairingEditor
+                            pairings={generatedNote.activityCptPairings}
+                            catalog={cptCodes?.map((c) => ({ id: c.id, code: c.code, description: c.description }))}
+                            onCodeChange={updateActivityPairingCode}
+                          />
+                        ) : null
+                      }
+                    />
                     <Separator />
-                    <div>
-                      <Label className="text-xs font-semibold text-purple-600">ASSESSMENT</Label>
-                      <p className="mt-1 text-foreground whitespace-pre-line">{generatedNote.assessment}</p>
-                    </div>
+                    <GeneratedSoapSection
+                      sectionKey="assessment"
+                      label="ASSESSMENT"
+                      labelClassName="text-purple-600"
+                      value={generatedNote.assessment}
+                      edited={therapistEditedSections.has("assessment")}
+                      onSave={(t) => saveSectionEdit("assessment", t)}
+                      disabled={weaving}
+                    />
                     <Separator />
-                    <div>
-                      <Label className="text-xs font-semibold text-orange-600">PLAN</Label>
+                    <GeneratedSoapSection
+                      sectionKey="plan"
+                      label="PLAN"
+                      labelClassName="text-orange-600"
+                      value={generatedNote.plan}
+                      edited={therapistEditedSections.has("plan")}
+                      onSave={(t) => saveSectionEdit("plan", t)}
+                      disabled={weaving}
+                    >
                       {planSuggestion ? (
                         <div className="mt-1 space-y-2">
                           <div className="p-2 bg-amber-50 border border-amber-300 rounded-lg" data-testid="plan-suggestion-card">
@@ -2757,9 +2958,9 @@ export default function SoapNotes() {
                           )}
                         </div>
                       ) : (
-                        <p className="mt-1 text-foreground">{generatedNote.plan}</p>
+                        <p className="mt-1 text-foreground whitespace-pre-line" data-testid="text-plan">{generatedNote.plan}</p>
                       )}
-                    </div>
+                    </GeneratedSoapSection>
                     <Separator />
                     {/* Documentation check — review before signing. Never edits
                         the note; asks the therapist for missing facts instead. */}
@@ -2843,7 +3044,7 @@ export default function SoapNotes() {
                                   {weaving ? (<><Loader2 className="w-3 h-3 mr-1 animate-spin" />Weaving…</>) : 'Weave answers into note'}
                                 </Button>
                                 <span className="text-[10px] text-muted-foreground">
-                                  You can also just edit the sections above directly.
+                                  Or use the Edit button on any section above to type the answer in yourself.
                                 </span>
                               </div>
                             </div>

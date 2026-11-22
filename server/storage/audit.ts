@@ -34,7 +34,7 @@ import {
   type Patient,
 } from "@shared/schema";
 import { db } from "../db";
-import { eq, desc, and, gte, lte, lt, count, sum, sql, isNull, inArray, ne } from "drizzle-orm";
+import { eq, desc, and, or, gte, lte, lt, count, sum, sql, isNull, inArray, ne } from "drizzle-orm";
 import { createHash, randomBytes } from "crypto";
 import { getPatient, getPatientStatements } from "./patients";
 
@@ -219,12 +219,24 @@ export async function createBaaRecord(record: InsertBaaRecord): Promise<BaaRecor
   return created;
 }
 
+// Includes this practice's own records plus any marked isPlatformWide -
+// BAAs TherapyBill AI (the platform operator) holds with infrastructure
+// vendors (AWS, Google Workspace) that cover every practice, not just the
+// one whichever admin happened to enter the record under. The OR clause
+// returns each row once even when both conditions match (e.g. a
+// platform-wide record entered under this exact practiceId) - it's a
+// single WHERE, not a union of separate queries.
 export async function getBaaRecords(practiceId: number): Promise<BaaRecord[]> {
   return await db
     .select()
     .from(baaRecords)
-    .where(eq(baaRecords.practiceId, practiceId))
+    .where(or(eq(baaRecords.practiceId, practiceId), eq(baaRecords.isPlatformWide, true)))
     .orderBy(desc(baaRecords.createdAt));
+}
+
+export async function getBaaRecordById(id: number): Promise<BaaRecord | undefined> {
+  const [record] = await db.select().from(baaRecords).where(eq(baaRecords.id, id));
+  return record;
 }
 
 export async function updateBaaRecord(id: number, record: Partial<InsertBaaRecord>): Promise<BaaRecord> {

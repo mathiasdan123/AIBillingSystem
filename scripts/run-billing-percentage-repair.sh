@@ -6,6 +6,8 @@
 # `node -e` — the same mechanism the deploy workflow's migration step uses.
 # See scripts/billing-percentage-repair-payload.cjs for scope + TIMING note (run before vs after the Oct 2 billing run).
 #
+# VERIFIED 2026-10-26 — see billing-percentage-repair-payload.cjs header.
+#
 # Usage:
 #   scripts/run-billing-percentage-repair.sh --dry-run   # transaction rolled back
 #   scripts/run-billing-percentage-repair.sh

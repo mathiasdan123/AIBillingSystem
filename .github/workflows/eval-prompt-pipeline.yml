@@ -1,0 +1,285 @@
+name: SOAP Generation Pipeline Eval (release gate)
+
+# BLOCKING release gate for the real SOAP generation pipeline -- distinct
+# from eval-prompt.yml (the raw-output diagnostic, unchanged, still
+# non-blocking). See scripts/eval-soap-generation-pipeline.ts's header for
+# the full rationale; short version: this calls the real
+# generateSoapNoteAndBilling(), the exact function the production route
+# calls, with only `storage` mocked -- every backstop, every prompt
+# builder, and final response assembly all run for real. A violation that
+# the raw diagnostic still flags (because it bypasses every backstop by
+# design) is NOT a failure here unless it survives the real pipeline.
+#
+# GATING (required check #6): spend is gated entirely by the job-level
+# `if:` on `pipeline-eval` below, NOT by the workflow trigger. Since
+# 2026-11-18 the gate has two ways to open:
+#
+#   1. AUTOMATIC -- the PR touches any file on the SOAP generation path
+#      (the seven files under TRIGGER COVERAGE below). The `changes` job
+#      lists the PR's changed files via the GitHub API -- matching both a
+#      file's current path and, for a renamed file, its previous path, so
+#      moving a watched file cannot slip past -- and sets
+#      `soap_path_touched`; no label is needed. Closes the coverage gap
+#      documented on QA #2: before this, an unlabeled PR that changed the
+#      prompt builders or provider routing merged with pipeline-eval
+#      "skipped", so the gate was only as good as someone remembering to
+#      label the PR.
+#   2. OPT-IN -- the `ready-for-eval` label, unchanged, for any PR that
+#      does not touch those files but where a human still wants the eval
+#      (e.g. a storage refactor outside storage/index.ts, or a dependency
+#      bump that changes the Anthropic SDK).
+#
+# The path detection is done by a JOB, never by a workflow-level `paths:`
+# filter, for the reason below.
+#
+# FIXED 2026-11-02: the trigger originally also carried a `paths:` filter
+# (the list under TRIGGER COVERAGE below), on the theory that an unrelated
+# PR shouldn't even invoke this workflow. That broke required-status-check
+# semantics: when `pipeline-eval` is a required check and a PR's commit
+# doesn't match the path filter, GitHub's classic branch protection never
+# creates ANY run for that commit -- not even a "skipped" one -- so the
+# required check sits as "Expected -- Waiting for status to be reported"
+# FOREVER and blocks merge. Confirmed live: PR #441 (a client-only change,
+# no path-filter match) got stuck exactly this way minutes after this
+# workflow was wired in as required. A job's `if:` evaluating false
+# produces a "skipped" conclusion, which DOES satisfy a required check --
+# only the workflow-level `paths:` filter (no run created at all) causes
+# the stuck-forever failure mode. So: the workflow triggers on every PR
+# unconditionally; the `changes` job always runs (cheap: one API call, no
+# checkout, no npm ci); and the `if:` on `pipeline-eval` is the only gate,
+# for both "should this actually spend money" and "does a status get
+# reported for every commit" at once.
+#
+#   - A PR that neither touches the path nor carries `ready-for-eval` gets
+#     an instant "skipped" status -- satisfies the required check, never
+#     pending-forever.
+#   - A PR that touches the path runs the eval on open and on every push
+#     (`synchronize`), whether or not it is labeled. There is no way to
+#     opt OUT of the eval for such a PR short of editing this workflow --
+#     and editing this workflow is itself on the path list.
+#   - Adding the label fires a real run tied to the commit present at that
+#     moment (the `labeled` trigger below).
+#   - Any LATER push re-fires via the `synchronize` trigger (re-checked
+#     against both the label and the path list by the same `if:`) -- so a
+#     passing run is always tied to the CURRENT head commit's code AND the
+#     eval config in that same commit. A push after a passing run
+#     invalidates it; the label is never a one-time token that reuses an
+#     old result.
+#   - Removing and re-adding the label (or closing the label dialog without
+#     re-adding) does not forge a pass -- GitHub's required-checks model
+#     keys a check's state to a commit SHA, not to the label's current
+#     on/off state, so there's no path to showing green without an actual
+#     run against that SHA.
+#   - FAIL-CLOSED: if the `changes` job itself fails (API outage, token
+#     problem), `pipeline-eval` still runs rather than skipping. A detection
+#     failure must never silently turn into "eval skipped" on a prompt PR;
+#     the cost of a spurious eval run is a few dollars, the cost of a
+#     missed one is a fabrication regression reaching production.
+#   - DRAFT PRs do not spend (2026-11-18): `pipeline-eval` is skipped while
+#     the PR is a draft and runs on `ready_for_review` (and every push after
+#     that). A draft cannot be merged, so the required check sitting at
+#     "skipped" weakens nothing; it lets a prompt or eval-harness PR be
+#     opened for discussion without a paid run until someone marks it
+#     ready for review; that event starts the first run, and every push
+#     after it runs as usual. Nothing runs while the PR stays a draft.
+#
+# PASS/FAIL POLICY (2026-11-18, see scripts/eval-gate-policy.ts): every
+# deterministic check is zero tolerance. The semantic judge's findings on a
+# sample whose deterministic checks are clean ("judge-only") are tolerated
+# up to ONE per scenario; a second one fails the run. Every judge-only
+# finding, tolerated or not, is printed in the job log, appended to the job
+# summary, and posted on the PR as a comment so a person reviews it. Why:
+# five consecutive PR runs failed on five different first-session
+# continuity phrasings while main passed; at the model's ~6-7% per-sample
+# rate an all-or-nothing 18-sample gate was failing most runs on variance.
+#
+# TRIGGER COVERAGE (requirement #5): every file that can change the final
+# output. Touching any of these on a PR runs the eval automatically (the
+# `changes` job below -- keep its SOAP_PATH_FILES list in sync with this
+# list; the two are the same seven files):
+#   - server/services/aiSoapBillingService.ts   (prompt builders, every
+#                                                 backstop, the pipeline
+#                                                 function itself, final
+#                                                 response assembly)
+#   - shared/activityCpt.ts                     (imported directly by the
+#                                                 service: normalizes the
+#                                                 activity-code pairings
+#                                                 and derives CPT codes,
+#                                                 units and reimbursement
+#                                                 in the final output --
+#                                                 added 2026-11-18 after
+#                                                 PR #461 review)
+#   - server/services/aiProvider.ts             (model/provider config,
+#                                                 which model/client is used)
+#   - server/utils/phiAiGuard.ts                (can gate the AI path off
+#                                                 entirely)
+#   - server/storage/index.ts                   (what real storage methods
+#                                                 this eval monkey-patches
+#                                                 point to -- a signature
+#                                                 change here can silently
+#                                                 break the mock)
+#   - scripts/eval-soap-generation-pipeline.ts  (the eval script itself)
+#   - .github/workflows/eval-prompt-pipeline.yml (this workflow itself)
+#
+# COST: makes real, billed API calls (default 3 samples/scenario x 5
+# scenarios = 15 generation calls + up to 12 judge calls), only when the
+# gate opens: a PR touching the path list above, a PR carrying
+# `ready-for-eval`, or a workflow_dispatch. See the PR description this
+# workflow shipped with for the per-run/per-month estimate Daniel approved
+# before this was wired in as required; the automatic path (PR #461) adds
+# runs only for PRs that change the SOAP generation output, which are the
+# PRs that should have been labeled anyway.
+#
+# NOT a substitute for eval-prompt.yml's weekly schedule: that diagnostic
+# still runs on its own cadence (10 samples/scenario) to catch drift from
+# Anthropic-side model changes between PRs; this workflow spends nothing
+# on a PR that neither touches the path list nor carries the label, by
+# design, so routine PRs never cost money even though every one of them
+# triggers (cheaply) the workflow itself and its `changes` job.
+
+on:
+  pull_request:
+    branches: [main]
+    # `opened`/`reopened` are REQUIRED here, not just labeled/synchronize
+    # (fixed 2026-11-03): a freshly opened single-commit PR fires only
+    # `opened`. Without it no run -- not even "skipped" -- was created for
+    # the PR's first commit, so the required check sat as "Expected" and
+    # blocked merge until someone pushed a second commit. PR #442 hit this
+    # the day after the paths: filter fix above for the same reason.
+    # `ready_for_review`: a draft skips the eval (see GATING); marking it
+    # ready is what starts the first paid run.
+    types: [opened, reopened, labeled, synchronize, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  # write: the review step below posts the judge-only findings on the PR.
+  pull-requests: write
+
+jobs:
+  # Decides whether this PR touches the SOAP generation path. Runs on every
+  # PR event (cheap: one API call, no checkout) so `pipeline-eval` always
+  # has an answer. On workflow_dispatch there is no PR, so it is skipped
+  # and `pipeline-eval` runs unconditionally (see its `if:`).
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    outputs:
+      soap_path_touched: ${{ steps.detect.outputs.soap_path_touched }}
+    steps:
+      - name: Detect SOAP generation path files in this PR
+        id: detect
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          # Keep in sync with TRIGGER COVERAGE at the top of this file.
+          SOAP_PATH_FILES: |
+            server/services/aiSoapBillingService.ts
+            shared/activityCpt.ts
+            server/services/aiProvider.ts
+            server/utils/phiAiGuard.ts
+            server/storage/index.ts
+            scripts/eval-soap-generation-pipeline.ts
+            .github/workflows/eval-prompt-pipeline.yml
+        run: |
+          set -euo pipefail
+          # The PR files endpoint lists every file changed relative to the
+          # merge base, which is exactly the set the eval cares about -- a
+          # `git diff` against a shallow checkout would need fetch-depth
+          # tuning and still miss files changed on the base since branching.
+          # --paginate covers PRs over 30 files. Both the current path and,
+          # for a renamed/moved file, its previous path are listed: a PR that
+          # renames a watched file changes everything that imported it and
+          # must not evade the gate by no longer matching its old name.
+          gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/files" \
+            --jq '.[] | .filename, (.previous_filename // empty)' > changed-files.txt
+          echo "PR #${PR_NUMBER} changed $(wc -l < changed-files.txt) path(s), previous names of renamed files included"
+          touched="false"
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            if grep -qxF -- "$path" changed-files.txt; then
+              echo "::notice::SOAP generation path file touched: $path -- pipeline-eval will run"
+              touched="true"
+            fi
+          done <<< "$SOAP_PATH_FILES"
+          if [ "$touched" = "false" ]; then
+            echo "No SOAP generation path files touched; pipeline-eval runs only if labeled ready-for-eval"
+          fi
+          echo "soap_path_touched=$touched" >> "$GITHUB_OUTPUT"
+
+  pipeline-eval:
+    name: pipeline-eval
+    runs-on: ubuntu-latest
+    needs: changes
+    # The only gate, for both "should this spend money" and "does a status
+    # get reported for every commit" at once -- see GATING above.
+    #
+    # `!cancelled()` instead of the implicit success() requirement on
+    # `needs`: when `changes` is skipped (workflow_dispatch) or FAILS, this
+    # job must still be evaluated, not auto-skipped. The path test is
+    # written as `!= 'false'` rather than `== 'true'` so a failed/absent
+    # detection (empty output) opens the gate -- fail-closed, see GATING.
+    # `github.event.pull_request.draft != true`: drafts never spend (see
+    # GATING); on workflow_dispatch there is no pull_request and the
+    # comparison is true.
+    if: >-
+      !cancelled() && github.event.pull_request.draft != true && (
+        github.event_name == 'workflow_dispatch' ||
+        contains(github.event.pull_request.labels.*.name, 'ready-for-eval') ||
+        needs.changes.outputs.soap_path_touched != 'false'
+      )
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run SOAP generation PIPELINE eval against the live model (final output, real backstops)
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          EVAL_SAMPLES_PER_SCENARIO: 3
+        run: npm run eval:soap-generation-pipeline
+
+      # Every judge-only finding (tolerated or not) and every hard failure
+      # goes on the PR as a comment, from .eval-results/pipeline-review.md,
+      # which the script writes only when there is something to review. A
+      # fully clean run posts nothing (the green check says enough).
+      - name: Post review summary on the PR
+        if: always() && github.event_name == 'pull_request'
+        # The eval's own verdict is the gate; a failed comment post (token,
+        # rate limit, API hiccup) must not turn a passing run red or mask a
+        # failing one. The findings are still in the job log and the step
+        # summary either way.
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ ! -s .eval-results/pipeline-review.md ]; then
+            echo "Nothing to review on this run; no comment posted."
+            exit 0
+          fi
+          gh pr comment "$PR_NUMBER" --repo "$GH_REPO" --body-file .eval-results/pipeline-review.md
+          echo "Posted the review summary on PR #$PR_NUMBER"
+
+      - name: Upload eval results for replay
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-soap-generation-pipeline-results
+          path: .eval-results/
+          if-no-files-found: ignore
+          # .eval-results is a dot-directory; without this the step reported
+          # "No files were found" and the replay JSON was lost (run 2026-11-04).
+          include-hidden-files: true

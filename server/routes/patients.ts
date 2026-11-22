@@ -26,6 +26,7 @@ import { validate } from '../middleware/validate';
 import { requirePatientConsent } from '../middleware/consentCheck';
 import { createPatientSchema } from '../validation/schemas';
 import { parsePagination, paginatedResponse } from '../utils/pagination';
+import { parseDateOnly } from '../utils/dateOnly';
 import logger from '../services/logger';
 import { sendEmail } from '../services/emailService';
 import { portalWelcome, intakeSubmissionNotification } from '../services/emailTemplates';
@@ -199,9 +200,13 @@ router.get('/', isAuthenticated, async (req: any, res) => {
     const usePagination = !!(req.query.page || req.query.limit);
 
     const practiceId = getAuthorizedPracticeId(req);
+    // ?archived=only backs the Patients page's Archived view; ?archived=include
+    // is for reports. Default excludes archived patients (QA 2026-11-18).
+    const archivedParam = String(req.query.archived ?? '');
+    const archived = archivedParam === 'only' || archivedParam === 'include' ? archivedParam : 'exclude';
     const [patients, total] = await Promise.all([
-      storage.getAllPatients(practiceId, usePagination ? { limit, offset } : undefined),
-      usePagination ? storage.countAllPatients(practiceId) : Promise.resolve(0),
+      storage.getAllPatients(practiceId, { ...(usePagination ? { limit, offset } : {}), archived }),
+      usePagination ? storage.countAllPatients(practiceId, { archived }) : Promise.resolve(0),
     ]);
 
     // HIPAA: Include consent status for each patient (batch query, not N+1)
@@ -486,6 +491,11 @@ const DETAIL_FIELDS = new Set([
   // Administrative sex for CMS-1500 Box 3. 'gender' was listed here for a
   // column that has never existed, so it silently went nowhere.
   'sex',
+  // Quick-add flows (calendar, walk-in, SOAP) create patients with no DOB
+  // since #457, and the only way to complete the record was... nothing: this
+  // route didn't accept it (QA sweep 2026-11-18). Storage encrypts it into
+  // dateOfBirthEnc exactly as createPatient does; '' clears both columns.
+  'dateOfBirth',
 ]);
 
 router.patch('/:id/details', isAuthenticated, async (req: any, res) => {
@@ -516,6 +526,20 @@ router.patch('/:id/details', isAuthenticated, async (req: any, res) => {
       return res.status(400).json({ error: 'Last name cannot be empty' });
     }
 
+    // DOB goes on every eligibility check and claim, so a malformed or future
+    // value is a guaranteed payer rejection — refuse it here rather than store
+    // it. YYYY-MM-DD only (a leading date part of a longer string is accepted).
+    if ('dateOfBirth' in patch && patch.dateOfBirth !== null) {
+      const parsed = parseDateOnly(String(patch.dateOfBirth));
+      if (!parsed) {
+        return res.status(400).json({ error: 'Date of birth must be a valid date (YYYY-MM-DD)' });
+      }
+      if (parsed.getTime() > Date.now()) {
+        return res.status(400).json({ error: 'Date of birth cannot be in the future' });
+      }
+      patch.dateOfBirth = String(patch.dateOfBirth).slice(0, 10);
+    }
+
     if (Object.keys(patch).length === 0) {
       return res.status(400).json({ error: 'No editable fields supplied' });
     }
@@ -532,6 +556,54 @@ router.patch('/:id/details', isAuthenticated, async (req: any, res) => {
   } catch (error) {
     logger.error('Error updating patient details', { error: error instanceof Error ? error.message : String(error) });
     res.status(500).json({ error: 'Failed to update patient details' });
+  }
+});
+
+/**
+ * PATCH /:id/archive and /:id/unarchive — retire a patient record without
+ * deleting anything (QA sweep 2026-11-18: there was no delete or archive
+ * control at all). Archived patients drop out of the default list, search and
+ * pickers and cannot take new appointments or claims; everything on file
+ * stays and unarchive reverses it. The right-to-erasure soft delete
+ * (patientRightsRoutes) is a different thing and stays separate.
+ *
+ * Tenant scope: the router.use('/:id') guard above has already 404'd any
+ * patient outside the caller's practice, and the storage WHERE carries the
+ * practice id again.
+ */
+router.patch('/:id/archive', isAuthenticated, async (req: any, res) => {
+  try {
+    const patient = req.patient;
+    const practiceId = getAuthorizedPracticeId(req);
+    if (!patient || patient.practiceId !== practiceId) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+    if (patient.archivedAt) return res.json(patient);
+    const updated = await storage.archivePatient(patient.id, practiceId);
+    if (!updated) return res.status(404).json({ error: 'Patient not found' });
+    logger.info('Patient archived', { patientId: patient.id, practiceId, by: req.user?.claims?.sub });
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error archiving patient', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to archive patient' });
+  }
+});
+
+router.patch('/:id/unarchive', isAuthenticated, async (req: any, res) => {
+  try {
+    const patient = req.patient;
+    const practiceId = getAuthorizedPracticeId(req);
+    if (!patient || patient.practiceId !== practiceId) {
+      return res.status(404).json({ error: 'Patient not found' });
+    }
+    if (!patient.archivedAt) return res.json(patient);
+    const updated = await storage.unarchivePatient(patient.id, practiceId);
+    if (!updated) return res.status(404).json({ error: 'Patient not found' });
+    logger.info('Patient unarchived', { patientId: patient.id, practiceId, by: req.user?.claims?.sub });
+    res.json(updated);
+  } catch (error) {
+    logger.error('Error unarchiving patient', { error: error instanceof Error ? error.message : String(error) });
+    res.status(500).json({ error: 'Failed to unarchive patient' });
   }
 });
 

@@ -30,6 +30,8 @@ export interface Parsed835 {
     totalAmount: number;
     paymentMethod: string; // ACH, CHK, FWT, etc.
     checkNumber?: string;
+    /** TRN03: the payer's originating company identifier (its EIN with a leading 1). Not a check number. */
+    originatingCompanyId?: string;
     checkDate?: string;
     payerName?: string;
     payerId?: string;
@@ -198,10 +200,17 @@ export function parse835(rawEdi: string): Parsed835 {
         break;
 
       case 'TRN':
+        // X12 835 TRN: TRN02 is the check / EFT trace number (reassociation
+        // key with the bank deposit); TRN03 is the originating company
+        // identifier, the payer's "1" + EIN. This used to put TRN03 in the
+        // Check # field (demo billing test 2026-11-19: trace
+        // QA-CORRECTED-20261119-1318 displayed as 1888888888).
         result.traceNumber = elements[2] || '';
-        // The check/EFT number may also be in TRN03
-        if (elements[3] && !result.payment.checkNumber) {
-          result.payment.checkNumber = elements[3];
+        if (elements[2]) {
+          result.payment.checkNumber = elements[2];
+        }
+        if (elements[3] && !result.payment.originatingCompanyId) {
+          result.payment.originatingCompanyId = elements[3];
         }
         break;
 
@@ -364,7 +373,9 @@ function parseBPR(elements: string[]): Partial<Parsed835['payment']> {
     transactionType: elements[1] || '',
     totalAmount: parseFloat(elements[2] || '0'),
     paymentMethod: elements[4] || '',
-    checkNumber: elements[10] || undefined,
+    // BPR10 is the payer's originating company identifier (its "1" + EIN),
+    // not a check number: the check / EFT trace lives in TRN02 only.
+    originatingCompanyId: elements[10] || undefined,
     checkDate: elements[16] ? formatDate(elements[16]) : undefined,
   };
 }
@@ -469,6 +480,8 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
   claimReference: string | null;
   /** CLP07 payer claim control number. */
   payerClaimId: string | null;
+  /** CLP02 claim status: 1/2/3 processed, 4 denied, 22 reversal. */
+  claimStatusCode: string | null;
   serviceDate: string | null;
   cptCode: string | null;
   chargedAmount: number;
@@ -494,6 +507,7 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
     memberId: string | null;
     claimReference: string | null;
     payerClaimId: string | null;
+    claimStatusCode: string | null;
     serviceDate: string | null;
     cptCode: string | null;
     chargedAmount: number;
@@ -529,6 +543,7 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
           memberId: claim.memberId || null,
           claimReference: claim.patientControlNumber || null,
           payerClaimId: claim.payerClaimControlNumber || null,
+          claimStatusCode: claim.claimStatusCode || null,
           serviceDate: svc.serviceDate || null,
           cptCode: svc.procedureCode || null,
           chargedAmount: svc.chargedAmount,
@@ -561,6 +576,7 @@ export function flattenToLineItems(parsed: Parsed835): Array<{
         memberId: claim.memberId || null,
         claimReference: claim.patientControlNumber || null,
         payerClaimId: claim.payerClaimControlNumber || null,
+        claimStatusCode: claim.claimStatusCode || null,
         serviceDate: null,
         cptCode: null,
         chargedAmount: claim.chargedAmount,

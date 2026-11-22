@@ -15,7 +15,7 @@ import {
   reviewsRouter, publicPortalRouter, patientIntakeRouter,
   aiAssistantRouter, aiAppealDebugRouter,
   aiRouter, insuranceRouter, bookingRouter, clinicalRouter, pdms2Router, progressNotesRouter, referralsRouter,
-  paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter,
+  paymentsRouter, notificationsRouter, sessionsRouter, webhooksRouter, sesNotificationsRouter,
   reconciliationRouter, plaidWebhookRouter, supportRouter,
   documentsRouter, followUpsRouter, revenueAtRiskRouter, schedulingRouter, eligibilityRouter, payerIntelRouter,
   practiceAnalyticsRouter, auditReportsRouter, timeTrackingRouter,
@@ -54,6 +54,7 @@ import { conditionalMfaRequired, conditionalRequireMfaSetup } from "./middleware
 import { mfaSetupRequired } from "./middleware/mfa-setup-required";
 import { requireFinancialRole } from "./middleware/financial-access";
 import { authLimiter } from "./middleware/rate-limiter";
+import { mcpOAuthCallbackLimiter } from "./middleware/mcpRateLimits";
 import logger from "./services/logger";
 import { cache } from "./services/cacheService";
 import { getRedisClient, isRedisReady } from "./services/redisClient";
@@ -349,6 +350,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.use('/api', sessionsRouter);
   // Webhook routes: /api/webhooks
   app.use('/api', webhooksRouter);
+  // SES bounce/complaint notifications (via SNS): /api/webhooks/ses-notifications
+  app.use('/api/webhooks', sesNotificationsRouter);
   // Document management routes: /api/documents
   app.use('/api/documents', documentsRouter);
   // Claim Follow-Up routes: /api/follow-ups/*
@@ -430,8 +433,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // These are required for Claude Desktop's "Add custom connector" flow.
   app.use(getMcpAuthRouter());
 
-  // POST /authorize/callback — custom endpoint for the OAuth authorize page form submission
-  app.post('/authorize/callback', express.json(), async (req, res) => {
+  // POST /authorize/callback — custom endpoint for the OAuth authorize page form submission.
+  // Rate limited per IP (mcpOAuthCallbackLimiter): this form accepts an MCP API
+  // key and sits outside the /api general limiter, so without its own limit it
+  // was an unthrottled brute-force surface for API keys (CodeQL #134).
+  app.post('/authorize/callback', mcpOAuthCallbackLimiter, express.json(), async (req, res) => {
     try {
       const { session_id, api_key } = req.body;
       if (!session_id || !api_key) {

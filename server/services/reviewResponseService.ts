@@ -109,8 +109,17 @@ function getAnthropic(): Anthropic | null {
   return anthropicClient;
 }
 
+/**
+ * Whether the review AI is available: the provider-aware check (Bedrock via
+ * the task role, or a direct-API key). Testing for the API key alone turned
+ * every review response into the template fallback on Bedrock.
+ */
+export function isReviewAiAvailable(): boolean {
+  return isAiConfigured();
+}
+
 function hasAnthropicKey(): boolean {
-  return Boolean(process.env.ANTHROPIC_API_KEY || process.env.CLAUDE_API_KEY);
+  return isReviewAiAvailable();
 }
 
 interface ReviewResponseOptions {
@@ -349,7 +358,7 @@ export function generateFeedbackRequestMessage(
 ): { subject?: string; body: string } {
   if (channel === 'sms') {
     return {
-      body: `Hi ${patientName}! Thank you for choosing ${practiceName}. We'd love to hear about your experience! Please share your feedback: ${feedbackUrl}`,
+      body: `Thank you for choosing ${practiceName}. We'd love to hear about your experience! Please share your feedback: ${feedbackUrl}`,
     };
   }
 
@@ -404,7 +413,7 @@ export function generateGooglePostRequestMessage(
 ): { subject?: string; body: string } {
   if (channel === 'sms') {
     return {
-      body: `Hi ${patientName}! Thank you for your wonderful feedback about ${practiceName}! Would you be willing to share it publicly on Google? It would mean so much to us: ${googleReviewUrl}`,
+      body: `Thank you for your wonderful feedback about ${practiceName}! Would you be willing to share it publicly on Google? It would mean so much to us: ${googleReviewUrl}`,
     };
   }
 

@@ -166,8 +166,10 @@ router.post('/reviews/requests/:id/send', isAuthenticated, async (req: any, res)
         const { isEmailConfigured } = await import('../email');
         if (isEmailConfigured()) {
           const message = generateFeedbackRequestMessage(patient.firstName, practiceName, feedbackUrl, 'email');
-          const nodemailer = await import('nodemailer');
-          const transporter = nodemailer.createTransport({
+          // Shared factory (SES under the AWS BAA when EMAIL_PROVIDER=aws, plus
+          // the outbound suppression/demo guard) -- not a raw SMTP transport.
+          const { createEmailTransporter } = await import('../services/emailTransportFactory');
+          const transporter = createEmailTransporter({
             host: process.env.SMTP_HOST || 'smtp.gmail.com',
             port: parseInt(process.env.SMTP_PORT || '587'),
             secure: process.env.SMTP_SECURE === 'true',
@@ -472,8 +474,10 @@ router.post('/public/feedback/:token', async (req: any, res) => {
             feedbackText,
           });
 
-          const nodemailer = await import('nodemailer');
-          const transporter = nodemailer.createTransport({
+          // Shared factory (SES under the AWS BAA when EMAIL_PROVIDER=aws, plus
+          // the outbound suppression/demo guard) -- not a raw SMTP transport.
+          const { createEmailTransporter } = await import('../services/emailTransportFactory');
+          const transporter = createEmailTransporter({
             host: process.env.SMTP_HOST || 'smtp.gmail.com',
             port: parseInt(process.env.SMTP_PORT || '587'),
             secure: process.env.SMTP_SECURE === 'true',
@@ -539,8 +543,10 @@ router.post('/public/feedback/:token', async (req: any, res) => {
                 'email'
               );
 
-              const nodemailer = await import('nodemailer');
-              const transporter = nodemailer.createTransport({
+              // Shared factory (SES under the AWS BAA when EMAIL_PROVIDER=aws, plus
+              // the outbound suppression/demo guard) -- not a raw SMTP transport.
+              const { createEmailTransporter } = await import('../services/emailTransportFactory');
+              const transporter = createEmailTransporter({
                 host: process.env.SMTP_HOST || 'smtp.gmail.com',
                 port: parseInt(process.env.SMTP_PORT || '587'),
                 secure: process.env.SMTP_SECURE === 'true',
@@ -748,8 +754,10 @@ router.post('/feedback/:id/request-google-post', isAuthenticated, async (req: an
         const { isEmailConfigured } = await import('../email');
         if (isEmailConfigured()) {
           const message = generateGooglePostRequestMessage(patient.firstName, practiceName, practice.googleReviewUrl, 'email');
-          const nodemailer = await import('nodemailer');
-          const transporter = nodemailer.createTransport({
+          // Shared factory (SES under the AWS BAA when EMAIL_PROVIDER=aws, plus
+          // the outbound suppression/demo guard) -- not a raw SMTP transport.
+          const { createEmailTransporter } = await import('../services/emailTransportFactory');
+          const transporter = createEmailTransporter({
             host: process.env.SMTP_HOST || 'smtp.gmail.com',
             port: parseInt(process.env.SMTP_PORT || '587'),
             secure: process.env.SMTP_SECURE === 'true',

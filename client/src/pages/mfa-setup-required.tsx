@@ -15,12 +15,33 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { ShieldCheck, KeyRound } from 'lucide-react';
+import { ShieldCheck, KeyRound, LogOut } from 'lucide-react';
 import { getAuthHeaders } from '@/hooks/useAuth';
+import { clearSensitiveStorage } from '@/lib/clearSensitiveStorage';
 
 interface MfaSetupResponse {
   uri: string;
   backupCodes: string[];
+}
+
+/**
+ * Both MFA endpoints sit behind the auth rate limiter (5 requests / 15 min).
+ * A 429 must be shown as "wait", never as "invalid code": the generic message
+ * sent a locked-out admin back to the button, and every extra click restarted
+ * their 15-minute window (production, 2026-11-04).
+ */
+export const MFA_RATE_LIMITED_MESSAGE =
+  'Too many attempts. Wait 15 minutes without clicking, then try once with a fresh code.';
+
+async function readMfaError(res: Response, fallback: string): Promise<string> {
+  if (res.status === 429) return MFA_RATE_LIMITED_MESSAGE;
+  try {
+    const data = await res.json();
+    if (data && typeof data.message === 'string' && data.message) return data.message;
+  } catch {
+    // non-JSON body: fall through to the fallback
+  }
+  return fallback;
 }
 
 export default function MfaSetupRequired() {
@@ -30,10 +51,14 @@ export default function MfaSetupRequired() {
   const [error, setError] = useState<string | null>(null);
 
   const setupMutation = useMutation({
+    // Never retry: the global shouldRetry only recognises numeric-status
+    // errors, so these text errors were retried 3x and one click burned 4 of
+    // the 5 allowed auth requests.
+    retry: false,
     mutationFn: async (): Promise<MfaSetupResponse> => {
       const headers = await getAuthHeaders();
       const res = await fetch('/api/mfa/setup', { method: 'POST', headers });
-      if (!res.ok) throw new Error('Could not start MFA setup. Please try again.');
+      if (!res.ok) throw new Error(await readMfaError(res, 'Could not start MFA setup. Please try again.'));
       return res.json();
     },
     onSuccess: (data) => {
@@ -44,6 +69,7 @@ export default function MfaSetupRequired() {
   });
 
   const verifyMutation = useMutation({
+    retry: false,
     mutationFn: async (code: string) => {
       const headers = await getAuthHeaders();
       const res = await fetch('/api/mfa/verify', {
@@ -51,7 +77,14 @@ export default function MfaSetupRequired() {
         headers: { 'Content-Type': 'application/json', ...headers },
         body: JSON.stringify({ token: code }),
       });
-      if (!res.ok) throw new Error('Invalid code. Check your authenticator and try again.');
+      if (!res.ok) {
+        throw new Error(
+          await readMfaError(
+            res,
+            'Invalid code. Use the TherapyBill entry you just added to your authenticator and try again.'
+          )
+        );
+      }
       return res.json();
     },
     onSuccess: () => {
@@ -152,6 +185,22 @@ export default function MfaSetupRequired() {
               </div>
             </div>
           )}
+
+          {/* This screen replaces the whole app (App.tsx gate), so without
+              this there is no way to sign out -- a trap on a shared machine,
+              and confusing for someone who did not expect to still be signed
+              in. Same logout path as the sidebar menu. */}
+          <div className="pt-2 border-t text-center">
+            <button
+              type="button"
+              className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-800 underline-offset-4 hover:underline"
+              onClick={() => { clearSensitiveStorage(); window.location.href = '/api/logout'; }}
+              data-testid="button-mfa-setup-sign-out"
+            >
+              <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+              Not you? Sign out
+            </button>
+          </div>
         </CardContent>
       </Card>
     </div>

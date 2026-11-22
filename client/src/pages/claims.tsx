@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,6 +10,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import { apiErrorMessage } from "@/lib/apiError";
 import { isUnauthorizedError } from "@/lib/authUtils";
 import { apiRequest } from "@/lib/queryClient";
 import {
@@ -22,6 +23,7 @@ import {
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Link } from "wouter";
 import { exportToCsv } from "@/lib/exportUtils";
+import { formatDateOnly } from "@/lib/dateOnly";
 import { QueryErrorState } from "@/components/QueryErrorState";
 import AiDisclaimerBanner from "@/components/AiDisclaimerBanner";
 import PrintLayout from "@/components/PrintLayout";
@@ -32,6 +34,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, Di
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -91,8 +94,36 @@ interface Claim {
   } | null;
 }
 
+// How each claim_events type renders on the Status timeline.
+const CLAIM_EVENT_LOOK: Record<string, { label: string; bg: string; fg: string; Icon: any }> = {
+  submitted: { label: 'Submitted', bg: 'bg-indigo-100', fg: 'text-indigo-600', Icon: Send },
+  denied: { label: 'Denied', bg: 'bg-red-100', fg: 'text-red-600', Icon: XCircle },
+  reopened: { label: 'Reopened to draft', bg: 'bg-amber-100', fg: 'text-amber-700', Icon: RefreshCw },
+  appeal_created: { label: 'Appeal created', bg: 'bg-blue-100', fg: 'text-blue-600', Icon: Scale },
+  appeal_submitted: { label: 'Appeal submitted', bg: 'bg-blue-100', fg: 'text-blue-600', Icon: Mail },
+  appeal_resolved: { label: 'Appeal resolved', bg: 'bg-green-100', fg: 'text-green-700', Icon: CheckCircle },
+  note_added: { label: 'Internal note', bg: 'bg-slate-100', fg: 'text-slate-600', Icon: FileText },
+};
+
 // Comprehensive claim detail component with tabs for billing, payments, and status
-function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation, onEditInsurance, cptCodes, onLineItemAdded }: {
+
+/** Pretty-print the stored clearinghouse response; a string that is not JSON is shown as is rather than throwing. */
+function formatClearinghouseResponse(value: unknown): string {
+  if (typeof value === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(value), null, 2);
+    } catch {
+      return value;
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+export function ClaimFullDetail({ claim: claimProp, lineItems, loadingLineItems, appeals, loadingAppeals, getPatientName, getInsuranceName, getStatusBadge, submitSecondaryMutation, regenerateAppealMutation, onEditInsurance, cptCodes, onLineItemAdded }: {
   claim: any;
   lineItems: any[];
   loadingLineItems: boolean;
@@ -111,6 +142,41 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
   /** Refetch the claim's line items after one is added. */
   onLineItemAdded?: () => void;
 }) {
+  // `claimProp` is the list row the user clicked — a snapshot. Editing a line
+  // item recalculates the claim total server-side and invalidates every
+  // /api/claims* query, so the list row updated while this modal kept
+  // showing the stale snapshot ($300 after a 3→2 unit edit that the row
+  // already showed as $200; QA sweep 2026-11-18). Read the claim live here;
+  // the snapshot only covers the first paint before the fetch lands.
+  const { data: liveClaim } = useQuery<any>({
+    queryKey: [`/api/claims/${claimProp.id}`],
+    enabled: !!claimProp.id,
+    retry: false,
+  });
+  const claim: any = liveClaim ?? claimProp;
+
+  // Append-only history (denials, reopens, submissions, appeal milestones,
+  // internal notes). The claims row only has the latest state, so the
+  // Status tab used to show nothing after Created/Submitted (QA 2026-11-18).
+  const { data: claimEventsData } = useQuery<any[]>({
+    queryKey: [`/api/claims/${claimProp.id}/events`],
+    enabled: !!claimProp.id,
+    retry: false,
+  });
+  const claimEvents: any[] = Array.isArray(claimEventsData) ? claimEventsData : [];
+
+  // The appeals the biller actually created (appeals table), as opposed to
+  // the `appeals` prop, which is the legacy AI recommendation rows. After
+  // "Create Appeal" the claim status is 'appeal' and the record lives here,
+  // which is why the tab used to say "available for denied claims" with an
+  // appeal sitting right there (QA 2026-11-18).
+  const { data: filedAppealsData } = useQuery<any[]>({
+    queryKey: [`/api/appeals?claimId=${claimProp.id}`],
+    enabled: !!claimProp.id,
+    retry: false,
+  });
+  const filedAppeals: any[] = Array.isArray(filedAppealsData) ? filedAppealsData : [];
+
   const [showAppealLetter, setShowAppealLetter] = useState(false);
   const { toast } = useToast();
 
@@ -283,9 +349,9 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
     <Tabs defaultValue="billing" className="w-full">
       <TabsList className="grid w-full grid-cols-4">
         <TabsTrigger value="billing">Billing</TabsTrigger>
-        <TabsTrigger value="payments">Payments</TabsTrigger>
-        <TabsTrigger value="status">Status</TabsTrigger>
-        <TabsTrigger value="appeals">Appeals</TabsTrigger>
+        <TabsTrigger value="payments" data-testid="tab-payments">Payments</TabsTrigger>
+        <TabsTrigger value="status" data-testid="tab-status">Status</TabsTrigger>
+        <TabsTrigger value="appeals" data-testid="tab-appeals">Appeals</TabsTrigger>
       </TabsList>
 
       {/* TAB 1: Billing Summary */}
@@ -766,7 +832,9 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                       <span className="text-sm font-medium">${parseFloat(posting.paymentAmount || '0').toFixed(2)}</span>
                     </div>
                     <span className="text-xs text-slate-500">
-                      {posting.paymentDate ? new Date(posting.paymentDate).toLocaleDateString() : '—'}
+                      {/* payment_date is a calendar day; new Date('YYYY-MM-DD') is UTC midnight and
+                          rendered a day early west of UTC (billing pass 2026-11-19: 11/12 vs Nov 13 everywhere else). */}
+                      {posting.paymentDate ? formatDateOnly(posting.paymentDate) : '—'}
                     </span>
                   </div>
                   <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
@@ -792,16 +860,23 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
           )}
         </div>
 
-        {/* Adjustment Summary */}
+        {/* Adjustment Summary. A denied claim's adjustment is the denied
+            charge, recoverable by appeal or correction — not a contractual
+            write-off, so the write-off % is not shown for it. */}
         {totalAdjustment > 0 && (
           <div className="border-t pt-4">
             <Label className="text-slate-700 font-semibold text-sm mb-2 block">Adjustment Summary</Label>
-            <div className="bg-orange-50 rounded-lg p-3 border border-orange-200 text-sm">
+            <div className="bg-orange-50 rounded-lg p-3 border border-orange-200 text-sm" data-testid="adjustment-summary">
               <div className="flex justify-between">
                 <span>Total Adjustments:</span>
                 <span className="font-medium text-orange-700">${totalAdjustment.toFixed(2)}</span>
               </div>
-              {billed > 0 && (
+              {(claim.status === 'denied' || claim.status === 'appeal') ? (
+                <p className="mt-1 text-xs text-orange-800" data-testid="adjustment-denied-note">
+                  Denied by the payer{claim.denialReason ? ` — ${claim.denialReason}` : ''}. This is not a contractual
+                  write-off: the amount can be recovered by appeal or by correcting and resubmitting.
+                </p>
+              ) : billed > 0 && (
                 <div className="flex justify-between mt-1">
                   <span>Write-off %:</span>
                   <span className="font-medium">{((totalAdjustment / billed) * 100).toFixed(1)}%</span>
@@ -825,7 +900,7 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                 <p className="text-xs text-slate-500">{new Date(claim.createdAt).toLocaleString()}</p>
               </div>
             </div>
-            {claim.submittedAt && (
+            {claim.submittedAt && !claimEvents.some((ev: any) => ev.eventType === 'submitted') && (
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-indigo-100 flex items-center justify-center"><Send className="w-4 h-4 text-indigo-600" /></div>
                 <div>
@@ -834,6 +909,29 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                 </div>
               </div>
             )}
+            {/* Recorded history, oldest first. Each row is a claim_events
+                entry written at the transition (deny, reopen, submit,
+                appeal created/submitted/resolved, internal note). */}
+            {claimEvents.map((ev: any) => {
+              const look = CLAIM_EVENT_LOOK[ev.eventType] ?? { label: ev.eventType, bg: 'bg-slate-100', fg: 'text-slate-600', Icon: Info };
+              const EvIcon = look.Icon;
+              return (
+                <div key={`ev-${ev.id}`} className="flex items-start gap-3" data-testid={`claim-event-${ev.eventType}`}>
+                  <div className={`w-8 h-8 rounded-full ${look.bg} flex items-center justify-center shrink-0`}><EvIcon className={`w-4 h-4 ${look.fg}`} /></div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium">{look.label}</p>
+                    <p className="text-xs text-slate-500">{new Date(ev.createdAt).toLocaleString()}</p>
+                    {ev.summary && <p className={`text-xs mt-0.5 ${ev.eventType === 'denied' ? 'text-red-600' : 'text-slate-600'}`}>{ev.summary}</p>}
+                    {ev.eventType === 'reopened' && ev.metadata?.previousDenialReason && (
+                      <p className="text-xs text-slate-500">Denial reason before reopen: {ev.metadata.previousDenialReason}</p>
+                    )}
+                    {ev.metadata?.appealId && (
+                      <Link href={`/appeals?appealId=${ev.metadata.appealId}`} className="text-xs text-blue-600 hover:underline">Open appeal #{ev.metadata.appealId}</Link>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
             {claim.paidAt && (
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-green-100 flex items-center justify-center"><CheckCircle className="w-4 h-4 text-green-600" /></div>
@@ -843,7 +941,9 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
                 </div>
               </div>
             )}
-            {claim.status === 'denied' && (
+            {/* Fallback for a denial that predates the events table: the row
+                still carries denialReason while the claim is denied. */}
+            {claim.status === 'denied' && !claimEvents.some((ev: any) => ev.eventType === 'denied') && (
               <div className="flex items-center gap-3">
                 <div className="w-8 h-8 rounded-full bg-red-100 flex items-center justify-center"><XCircle className="w-4 h-4 text-red-600" /></div>
                 <div>
@@ -883,14 +983,20 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
           </div>
         )}
 
-        {/* Clearinghouse Response */}
+        {/* Clearinghouse Response. Wrapped (whitespace-pre-wrap + break-all)
+            and boxed (min-w-0 / max-w-full): a long single-line value used to
+            widen the whole tab, forcing horizontal scroll and pushing the
+            Clearinghouse "Status:" / "Submitted:" values off the right edge
+            (demo retest 2026-11-19). The JSON stays readable; nothing else
+            moves. */}
         {claim.clearinghouseResponse && (
-          <div className="border-t pt-4">
+          <div className="border-t pt-4 min-w-0 max-w-full">
             <Label className="text-slate-700 font-semibold mb-2 block">Clearinghouse Response</Label>
-            <pre className="text-xs bg-slate-50 p-3 rounded-lg border overflow-x-auto max-h-48 overflow-y-auto">
-              {typeof claim.clearinghouseResponse === 'string'
-                ? JSON.stringify(JSON.parse(claim.clearinghouseResponse), null, 2)
-                : JSON.stringify(claim.clearinghouseResponse, null, 2)}
+            <pre
+              className="text-xs bg-slate-50 p-3 rounded-lg border max-w-full max-h-48 overflow-y-auto overflow-x-hidden whitespace-pre-wrap break-all"
+              data-testid="clearinghouse-response"
+            >
+              {formatClearinghouseResponse(claim.clearinghouseResponse)}
             </pre>
           </div>
         )}
@@ -939,6 +1045,41 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
 
       {/* TAB 4: Appeals */}
       <TabsContent value="appeals" className="mt-4 space-y-4">
+        {/* Filed appeals (appeals table) come first: shown for denied AND
+            appeal-state claims, and for any state that has an appeal row.
+            Each links to its draft on the Appeals page. */}
+        {filedAppeals.length > 0 && (
+          <div className="space-y-2" data-testid="filed-appeals">
+            <Label className="text-slate-700 font-semibold flex items-center gap-2">
+              <Scale className="w-4 h-4 text-blue-600" />
+              Appeals on this claim
+            </Label>
+            {filedAppeals.map((a: any) => (
+              <div key={a.id} className="flex items-center justify-between rounded-lg border bg-card p-3" data-testid={`filed-appeal-${a.id}`}>
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">Appeal #{a.id}</span>
+                    <Badge variant="outline" className="capitalize">{String(a.appealLevel || 'initial').replace(/_/g, ' ')}</Badge>
+                    <Badge className={
+                      a.status === 'ready' ? 'bg-blue-100 text-blue-800' :
+                      a.status === 'submitted' || a.status === 'in_review' ? 'bg-indigo-100 text-indigo-800' :
+                      a.status === 'won' || a.status === 'partial' ? 'bg-green-100 text-green-800' :
+                      a.status === 'lost' ? 'bg-red-100 text-red-800' :
+                      'bg-yellow-100 text-yellow-800'
+                    }>{String(a.status).replace(/_/g, ' ')}</Badge>
+                  </div>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    {a.deadlineDate ? `Filing deadline ${String(a.deadlineDate).slice(0, 10)}` : 'No filing deadline set'}
+                    {a.appealedAmount ? ` · $${a.appealedAmount} appealed` : ''}
+                  </p>
+                </div>
+                <Link href={`/appeals?appealId=${a.id}`} className="text-sm text-blue-600 hover:underline whitespace-nowrap" data-testid={`link-appeal-${a.id}`}>
+                  Open appeal
+                </Link>
+              </div>
+            ))}
+          </div>
+        )}
         {claim.status === 'denied' ? (
           <>
             <div className="flex items-center justify-between">
@@ -1024,12 +1165,17 @@ function ClaimFullDetail({ claim, lineItems, loadingLineItems, appeals, loadingA
               </div>
             )}
           </>
-        ) : (
+        ) : claim.status === 'appeal' && filedAppeals.length === 0 ? (
+          <div className="text-center py-8">
+            <Loader2 className="w-6 h-6 animate-spin text-blue-600 mx-auto mb-2" />
+            <p className="text-slate-500 text-sm">Loading this claim's appeal…</p>
+          </div>
+        ) : filedAppeals.length === 0 ? (
           <div className="text-center py-8">
             <Scale className="w-12 h-12 text-slate-300 mx-auto mb-4" />
             <p className="text-slate-500">Appeals are available for denied claims</p>
           </div>
-        )}
+        ) : null}
       </TabsContent>
     </Tabs>
   );
@@ -1058,6 +1204,14 @@ export default function Claims() {
   const [showSuperbillDialog, setShowSuperbillDialog] = useState(false);
   const [selectedClaim, setSelectedClaim] = useState<Claim | null>(null);
   const [showDetailDialog, setShowDetailDialog] = useState(false);
+  // Export Claims: the button shows a spinner and refuses a second click
+  // while the export is being fetched (QA demo pass 2026-11-19, item 7: no
+  // visible feedback between the click and the download).
+  const [exporting, setExporting] = useState(false);
+  // /claims?claimId=N opens that claim's detail once (deep link from the
+  // Revenue at Risk queue and the claim timeline; QA demo pass 2026-11-19).
+  const deepLinkHandled = useRef(false);
+  const handleViewClaimRef = useRef<(claim: Claim) => void>(() => {});
   const [showPayDialog, setShowPayDialog] = useState(false);
   const [showDenyDialog, setShowDenyDialog] = useState(false);
   const [paidAmount, setPaidAmount] = useState("");
@@ -1077,6 +1231,9 @@ export default function Claims() {
   const [denialPredictionResult, setDenialPredictionResult] = useState<Claim["denialPrediction"]>(null);
   const [predictingDenial, setPredictingDenial] = useState(false);
   const [preSubmitClaimId, setPreSubmitClaimId] = useState<number | null>(null); // set when Submit triggers denial check
+  // Server message from the last failed submission, shown inside the
+  // pre-submit risk dialog (which now stays open until the request settles).
+  const [submitError, setSubmitError] = useState<string | null>(null);
   // Holds the patient ID whose insurance the user is fixing inline from the
   // scrub-error dialog. Null = the fix-insurance dialog is closed.
   const [insuranceFixPatientId, setInsuranceFixPatientId] = useState<number | null>(null);
@@ -1182,21 +1339,34 @@ export default function Claims() {
   // and the only place it was visible was Settings — so the first anyone knew
   // of it was a claim they believed they had filed coming back untransmitted.
   // Surface it where claims are actually submitted.
-  const { data: practice } = useQuery<{ id: number; sandboxMode?: boolean }>({
+  const { data: practice } = useQuery<{ id: number; sandboxMode?: boolean; isDemo?: boolean }>({
     queryKey: [`/api/practices/${practiceId}`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   });
+  // The demo practice simulates submissions locally (see the submit route):
+  // its banner explains that, instead of the sandbox banner's advice to switch
+  // to Live Mode, which a demo prospect cannot and must not follow.
+  const isDemoPractice = practice?.isDemo === true;
   // Default-on: treat "not loaded yet" as NOT sandbox so the banner never
   // flashes on a live practice, but treat an explicit true (or a null/absent
   // column, which the DB default makes true) as sandbox.
-  const isSandboxMode = practice ? practice.sandboxMode !== false : false;
+  const isSandboxMode = practice ? practice.sandboxMode !== false && !isDemoPractice : false;
 
+  // `archived=include`: this list resolves the patient NAME on every claim
+  // card, the detail dialog and the insurance-fix dialog, and a claim keeps
+  // its patient after the patient is archived. The default list excludes
+  // archived patients (that is what archive means for pickers), which made
+  // an archived patient's existing claims read "Unknown" (QA 2026-11-18,
+  // right after #472). The new-claim picker filters archived rows back out
+  // below (`pickablePatients`); the server refuses a new claim for an
+  // archived patient regardless.
   const { data: patients } = useQuery<any[]>({
-    queryKey: [`/api/patients?practiceId=${practiceId}`],
+    queryKey: [`/api/patients?practiceId=${practiceId}&archived=include`],
     enabled: isAuthenticated && !!practiceId,
     retry: false,
   });
+  const pickablePatients = (patients ?? []).filter((p: any) => !p.archivedAt);
 
   // Patient names are PHI-encrypted server-side and can't be searched in SQL, so
   // resolve the search term against the decrypted patient list here and pass the
@@ -1260,6 +1430,25 @@ export default function Claims() {
     retry: false,
   });
 
+  useEffect(() => {
+    if (!isAuthenticated || deepLinkHandled.current) return;
+    const raw = new URLSearchParams(window.location.search).get("claimId");
+    const claimId = raw ? parseInt(raw, 10) : NaN;
+    if (!Number.isInteger(claimId) || claimId <= 0) return;
+    deepLinkHandled.current = true;
+    (async () => {
+      try {
+        // Fetched by id rather than looked up in the current page: the linked
+        // claim may be on another page or filtered out of the list.
+        const res = await apiRequest("GET", `/api/claims/${claimId}`);
+        handleViewClaimRef.current(await res.json());
+      } catch {
+        toast({ title: "Claim not found", description: `Claim ${claimId} could not be opened.`, variant: "destructive" });
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAuthenticated]);
+
   const { data: cptCodes } = useQuery<any[]>({
     queryKey: ['/api/cpt-codes'],
     enabled: isAuthenticated,
@@ -1289,7 +1478,7 @@ export default function Claims() {
       invalidateClaims();
       queryClient.invalidateQueries({ queryKey: [`/api/sessions/unbilled?practiceId=${practiceId}`] });
       toast({
-        title: "Superbill Generated",
+        title: "Claim Created",
         description: `Claim ${data.claim.claimNumber} created for $${data.superbillDetails.totalAmount}`,
       });
       setShowSessionsDialog(false);
@@ -1513,13 +1702,40 @@ export default function Claims() {
   // date. Exists because the first claim a practice ever files was otherwise
   // also the first real test of the submission path.
   const dryRunMutation = useMutation({
+    // The app-wide default (queryClient.ts) auto-retries a failed mutation up
+    // to 2 more times with backoff. Combined with the 25s client timeout
+    // below, a single slow/hung attempt silently became three -- turning a
+    // ~70s hang into ~4 minutes, worse than having no timeout at all. A
+    // user-visible retry (clicking the button again) is the right recovery
+    // here, not an invisible automatic one stacked on top of an already-slow
+    // external call.
+    retry: false,
     mutationFn: async (claimId: number) => {
-      const res = await fetch(`/api/claims/${claimId}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ dryRun: true }),
-        credentials: "include",
-      });
+      // The server's own Stedi call is capped at 20s, but nothing here
+      // bounded the client's wait on top of that -- if anything upstream
+      // (a proxy, a stalled connection) delayed the response past what the
+      // server-side timeout alone accounts for, this button would spin
+      // indefinitely with no way out but a page reload. 25s gives the
+      // server's timeout a moment to actually return before giving up here.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/claims/${claimId}/submit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ dryRun: true }),
+          credentials: "include",
+          signal: controller.signal,
+        });
+      } catch (err: any) {
+        if (err?.name === "AbortError") {
+          throw new Error("Test run is taking too long. Please try again in a moment.");
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
       const data = await res.json();
       if (!res.ok && !data?.dryRun) {
         throw new Error(data.message || "Test run failed");
@@ -1559,32 +1775,76 @@ export default function Claims() {
     },
   });
 
+  // Draft claim pending deletion, confirmed through an in-page AlertDialog.
+  // QA 2026-11-18: the row menu called window.confirm() from the menu item's
+  // click handler. A native confirm() blocks the event loop while Radix's
+  // DropdownMenu is mid-close (pointer-events locked on <body>, focus being
+  // returned to the trigger), and the tab froze with no dialog visible,
+  // reproduced twice. The menu item now only records which claim to delete;
+  // the dialog renders outside the menu and runs the mutation on confirm.
+  const [claimPendingDelete, setClaimPendingDelete] = useState<Claim | null>(null);
+  // Server message from the last failed delete, shown inside the confirm
+  // dialog (demo pass 2026-11-19: a 500 produced no visible error at all).
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
   const deleteClaimMutation = useMutation({
+    // The app-wide default retries a 5xx three times with backoff. For a
+    // DELETE that is both wrong (a destructive call repeating itself) and the
+    // reason the failure looked silent: the error toast only arrived ~7s
+    // later, after the user had moved on.
+    retry: false,
     mutationFn: async (claimId: number) => {
       const res = await apiRequest("DELETE", `/api/claims/${claimId}`);
       return res.json();
     },
     onSuccess: () => {
+      setClaimPendingDelete(null);
+      setDeleteError(null);
       invalidateClaims();
       toast({ title: "Draft claim deleted" });
     },
     onError: (error: any) => {
+      const message = apiErrorMessage(error, "Please try again.");
+      setDeleteError(message);
       toast({
         title: "Couldn't delete this claim",
-        description: String(error?.message ?? '').replace(/^\d{3}:\s*/, '') || "Please try again.",
+        description: message,
         variant: "destructive",
       });
     },
   });
 
   const submitClaimMutation = useMutation({
+    // See dryRunMutation above: the app-wide default auto-retry stacked on
+    // top of a slow external call turns one hang into three. Especially
+    // wrong for a real submission -- an invisible auto-retry is exactly the
+    // duplicate-submission risk the timeout's own error message warns
+    // against, before the user ever sees that warning.
+    retry: false,
     mutationFn: async (claimId: number) => {
-      const res = await fetch(`/api/claims/${claimId}/submit`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-        credentials: "include",
-      });
+      // Same client-side bound as dryRunMutation above -- the server's own
+      // Stedi call is capped at 20s, but nothing stopped this button from
+      // spinning indefinitely if the response took longer than that to
+      // actually arrive.
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 25000);
+      let res: Response;
+      try {
+        res = await fetch(`/api/claims/${claimId}/submit`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({}),
+          credentials: "include",
+          signal: controller.signal,
+        });
+      } catch (err: any) {
+        if (err?.name === "AbortError") {
+          throw new Error("Submission is taking too long. Please check the claim's status before retrying.");
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeoutId);
+      }
       const data = await res.json();
       if (!res.ok) {
         // Attach the parsed body to the error so onError can read scrub results
@@ -1597,6 +1857,11 @@ export default function Claims() {
     },
     onSuccess: (data) => {
       invalidateClaims();
+      // The pre-submit risk dialog stays open while the request is in flight
+      // (so a failure can be shown in it); the result is in, so close it.
+      setShowDenialPrediction(false);
+      setPreSubmitClaimId(null);
+      setSubmitError(null);
       // Show scrub warnings if present
       if (data.scrubResult?.warnings?.length > 0) {
         setScrubWarnings(data.scrubResult.warnings);
@@ -1604,10 +1869,12 @@ export default function Claims() {
         setShowScrubResults(true);
       }
       toast({
-        title: data.success ? "Success" : "Error",
-        description: data.submissionMethod === 'stedi'
-          ? "Claim submitted to clearinghouse"
-          : data.message,
+        title: data.simulated ? "Submission simulated (demo)" : data.success ? "Success" : "Error",
+        description: data.simulated
+          ? "Marked submitted here. Nothing was sent to a clearinghouse or payer."
+          : data.submissionMethod === 'stedi'
+            ? "Claim submitted to clearinghouse"
+            : data.message,
         variant: data.success ? "default" : "destructive",
       });
     },
@@ -1623,8 +1890,11 @@ export default function Claims() {
         }, 500);
         return;
       }
-      // Handle scrub failure (422)
+      // Handle scrub failure (422): the scrub-results dialog takes over.
       if (error.status === 422 && error.scrubResult) {
+        setShowDenialPrediction(false);
+        setPreSubmitClaimId(null);
+        setSubmitError(null);
         invalidateClaims();
         setScrubErrors(error.scrubResult.errors || []);
         setScrubWarnings(error.scrubResult.warnings || []);
@@ -1646,9 +1916,16 @@ export default function Claims() {
         }
         return;
       }
+      // Any other refusal (e.g. the demo-practice firewall, a co-sign
+      // requirement): keep the risk dialog open and show the server's own
+      // message in it, as well as in a toast. Demo pass 2026-11-19: the 400
+      // was answered but the dialog had already closed and nothing visible
+      // explained why the claim stayed Draft.
+      const message = apiErrorMessage(error, "Failed to submit claim");
+      setSubmitError(message);
       toast({
-        title: "Error",
-        description: error.message || "Failed to submit claim",
+        title: "Claim was not submitted",
+        description: message,
         variant: "destructive",
       });
     },
@@ -1906,8 +2183,9 @@ export default function Claims() {
         description: error.message || "Failed to predict denial risk",
         variant: "destructive",
       });
+    } finally {
+      setPredictingDenial(false);
     }
-    setPredictingDenial(false);
   };
 
   // Mark appeal as sent
@@ -2112,13 +2390,32 @@ export default function Claims() {
     pendingAmount: claimsSummary?.pendingAmount || 0,
   };
 
+  // While the patient / payer lists are still loading (right after a deploy
+  // the first render has claims but not patients yet), show a placeholder
+  // rather than "Unknown", which reads as a data problem.
   const getPatientName = (patientId: number) => {
-    const patient = patients?.find(p => p.id === patientId);
+    if (!patients) return '…';
+    const patient = patients.find(p => p.id === patientId);
     return patient ? `${patient.firstName} ${patient.lastName}` : 'Unknown';
   };
 
+  // Non-blocking heads-up when submitting a claim for an archived patient
+  // (QA 2026-11-18). Archive hides the patient from pickers and blocks NEW
+  // claims; an existing draft is still legitimate billing for past services
+  // and must go out, so this only tells the biller what they are looking at.
+  const notifyIfPatientArchived = (patientId: number) => {
+    const patient = patients?.find(p => p.id === patientId);
+    if (patient?.archivedAt) {
+      toast({
+        title: "This patient is archived",
+        description: `${patient.firstName} ${patient.lastName} is archived. The claim will still be submitted.`,
+      });
+    }
+  };
+
   const getInsuranceName = (insuranceId: number) => {
-    const insurance = insurances?.find(i => i.id === insuranceId);
+    if (!insurances) return '…';
+    const insurance = insurances.find(i => i.id === insuranceId);
     return insurance?.name || 'Unknown';
   };
 
@@ -2246,6 +2543,7 @@ export default function Claims() {
       setClaimAppeals([]);
     }
   };
+  handleViewClaimRef.current = handleViewClaim;
 
   const handleMarkPaid = (claim: Claim) => {
     setSelectedClaim(claim);
@@ -2260,6 +2558,17 @@ export default function Claims() {
 
   return (
     <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
+      {isDemoPractice && (
+        <Alert className="mb-4" data-testid="alert-demo-practice">
+          <ShieldAlert className="h-4 w-4" />
+          <AlertTitle>Demo practice — submissions are simulated</AlertTitle>
+          <AlertDescription>
+            Submit runs the same checks as a real claim and then records a simulated clearinghouse
+            acceptance here, so you can try the submit, denial and appeal flows. Nothing is sent to a
+            clearinghouse or payer.
+          </AlertDescription>
+        </Alert>
+      )}
       {isSandboxMode && (
         <Alert variant="destructive" className="mb-4" data-testid="alert-sandbox-mode">
           <ShieldAlert className="h-4 w-4" />
@@ -2284,7 +2593,11 @@ export default function Claims() {
           <Button
             variant="outline"
             className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0"
+            disabled={exporting}
+            data-testid="button-export-claims"
             onClick={async () => {
+              if (exporting) return;
+              setExporting(true);
               try {
                 // Export ALL rows matching the current filters, not just the
                 // visible page — the `all=1` path returns every match.
@@ -2316,12 +2629,14 @@ export default function Claims() {
                 toast({ title: "Export Complete", description: `Exported ${rows.length} claims to CSV.` });
               } catch {
                 toast({ title: "Export Failed", description: "Could not export claims. Please try again.", variant: "destructive" });
+              } finally {
+                setExporting(false);
               }
             }}
           >
-            <Download className="w-4 h-4 mr-1 md:mr-2" />
-            <span className="hidden sm:inline">Export Claims</span>
-            <span className="sm:hidden">Export</span>
+            {exporting ? <Loader2 className="w-4 h-4 mr-1 md:mr-2 animate-spin" /> : <Download className="w-4 h-4 mr-1 md:mr-2" />}
+            <span className="hidden sm:inline">{exporting ? "Exporting…" : "Export Claims"}</span>
+            <span className="sm:hidden">{exporting ? "Exporting…" : "Export"}</span>
           </Button>
           <Button variant="outline" onClick={() => setShowSessionsDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
             <FileText className="w-4 h-4 mr-1 md:mr-2" />
@@ -2384,7 +2699,7 @@ export default function Claims() {
                                   <p className="text-sm text-muted-foreground py-2">No patient found.</p>
                                 </CommandEmpty>
                                 <CommandGroup>
-                                  {patients?.map((p: any) => (
+                                  {pickablePatients.map((p: any) => (
                                     <CommandItem
                                       key={p.id}
                                       value={`${p.firstName} ${p.lastName}`}
@@ -2611,13 +2926,13 @@ export default function Claims() {
         </div>
       </div>
 
-      {/* Generate from Session Dialog */}
+      {/* Generate Claim from Session Dialog */}
       <Dialog open={showSessionsDialog} onOpenChange={setShowSessionsDialog}>
         <DialogContent className="sm:max-w-[600px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Generate Superbill from Session</DialogTitle>
+            <DialogTitle>Generate Claim from Session</DialogTitle>
             <DialogDescription>
-              Select a completed session to automatically generate a claim/superbill
+              Select a completed session to automatically generate a claim
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
@@ -2638,7 +2953,7 @@ export default function Claims() {
                               {session.patient?.firstName} {session.patient?.lastName}
                             </span>
                             <Badge variant="outline" className="text-xs">
-                              {new Date(session.sessionDate).toLocaleDateString()}
+                              {formatDateOnly(session.sessionDate)}
                             </Badge>
                           </div>
                           <div className="text-sm text-muted-foreground">
@@ -2697,7 +3012,7 @@ export default function Claims() {
                 <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-2" />
                 <p className="text-muted-foreground">All sessions have been billed!</p>
                 <p className="text-sm text-slate-400 mt-1">
-                  Complete a new session to generate a superbill
+                  Complete a new session to generate a claim
                 </p>
               </div>
             )}
@@ -3125,7 +3440,10 @@ export default function Claims() {
                         )}
                       </div>
                       <p className="text-sm text-muted-foreground mt-1">
-                        {getPatientName(claim.patientId)} • {getInsuranceName(claim.insuranceId)}
+                        {getPatientName(claim.patientId)}
+                        {insurances?.find((i) => i.id === claim.insuranceId)?.name
+                          ? ` • ${insurances.find((i) => i.id === claim.insuranceId)!.name}`
+                          : ''}
                       </p>
                       <p className="text-xs text-slate-500 mt-1">
                         Created {new Date(claim.createdAt).toLocaleDateString()}
@@ -3234,6 +3552,7 @@ export default function Claims() {
                             size="sm"
                             onClick={() => {
                               setSelectedClaim(claim);
+                              notifyIfPatientArchived(claim.patientId);
                               setPreSubmitClaimId(claim.id);
                               predictDenialRisk(claim.id);
                             }}
@@ -3251,7 +3570,7 @@ export default function Claims() {
 
                       <DropdownMenu>
                         <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="sm">
+                          <Button variant="ghost" size="sm" aria-label={`Actions for claim ${claim.claimNumber}`} data-testid={`menu-trigger-claim-${claim.id}`}>
                             <MoreVertical className="w-4 h-4" />
                           </Button>
                         </DropdownMenuTrigger>
@@ -3285,15 +3604,7 @@ export default function Claims() {
                               <DropdownMenuSeparator />
                               <DropdownMenuItem
                                 className="text-destructive focus:text-destructive"
-                                onClick={() => {
-                                  if (
-                                    window.confirm(
-                                      `Delete draft claim ${claim.claimNumber}? It has never been sent anywhere, so nothing is withdrawn — but this cannot be undone.`,
-                                    )
-                                  ) {
-                                    deleteClaimMutation.mutate(claim.id);
-                                  }
-                                }}
+                                onClick={() => { setDeleteError(null); setClaimPendingDelete(claim); }}
                                 data-testid={`menu-delete-claim-${claim.id}`}
                               >
                                 <Trash2 className="w-4 h-4 mr-2" />
@@ -3660,7 +3971,10 @@ export default function Claims() {
       {/* Denial Risk Prediction Dialog */}
       <Dialog open={showDenialPrediction} onOpenChange={(open) => {
         setShowDenialPrediction(open);
-        if (!open) setPreSubmitClaimId(null);
+        if (!open) {
+          setPreSubmitClaimId(null);
+          setSubmitError(null);
+        }
       }}>
         <DialogContent className="sm:max-w-[650px] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -3804,6 +4118,14 @@ export default function Claims() {
                 </div>
               )}
 
+              {preSubmitClaimId && submitError && (
+                <Alert variant="destructive" data-testid="alert-submit-error">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertTitle>Claim was not submitted</AlertTitle>
+                  <AlertDescription>{submitError}</AlertDescription>
+                </Alert>
+              )}
+
               {/* Action buttons */}
               <div className="flex justify-between items-center pt-2 border-t">
                 <p className="text-xs text-slate-400">
@@ -3828,6 +4150,7 @@ export default function Claims() {
                         size="sm"
                         onClick={() => {
                           setPreSubmitClaimId(null);
+                          setSubmitError(null);
                           setShowDenialPrediction(false);
                         }}
                       >
@@ -3837,9 +4160,10 @@ export default function Claims() {
                         size="sm"
                         variant={denialPredictionResult.riskLevel === 'high' ? 'destructive' : 'default'}
                         onClick={() => {
+                          // Stay open until the server answers: a refusal is
+                          // shown right here (submitError), success closes it.
+                          setSubmitError(null);
                           submitClaimMutation.mutate(preSubmitClaimId);
-                          setPreSubmitClaimId(null);
-                          setShowDenialPrediction(false);
                         }}
                         disabled={submitClaimMutation.isPending}
                       >
@@ -4060,6 +4384,41 @@ export default function Claims() {
             />
           )}
         </PrintLayout>
+
+        {/* Delete-draft confirmation. Rendered outside the row menu so the
+            menu finishes closing before any modal appears. */}
+        <AlertDialog open={!!claimPendingDelete} onOpenChange={(open) => { if (!open) { setClaimPendingDelete(null); setDeleteError(null); } }}>
+          <AlertDialogContent data-testid="dialog-delete-claim">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete draft claim {claimPendingDelete?.claimNumber}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                It has never been sent anywhere, so nothing is withdrawn — but this cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {deleteError && (
+              <Alert variant="destructive" data-testid="alert-delete-error">
+                <AlertCircle className="h-4 w-4" />
+                <AlertTitle>Couldn't delete this claim</AlertTitle>
+                <AlertDescription>{deleteError}</AlertDescription>
+              </Alert>
+            )}
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="button-cancel-delete-claim">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={deleteClaimMutation.isPending}
+                onClick={(e) => {
+                  // Keep the dialog open until the request settles.
+                  e.preventDefault();
+                  if (claimPendingDelete) deleteClaimMutation.mutate(claimPendingDelete.id);
+                }}
+                data-testid="button-confirm-delete-claim"
+              >
+                {deleteClaimMutation.isPending ? "Deleting…" : "Delete draft"}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );

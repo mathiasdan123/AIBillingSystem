@@ -19,6 +19,34 @@ async function isAdmin(req: Request, res: Response, next: NextFunction) {
   }
 }
 
+/**
+ * Zero recorded breaches means there is nothing pending to notify anyone
+ * about - that's compliant, not "not assessed". Scoring it as not_assessed
+ * (worth 0 points, same as non_compliant) understated the overall HIPAA
+ * self-assessment score for practices with a clean breach history.
+ */
+export function computeBreachNotificationStatus(
+  unresolvedNotificationsCount: number,
+  totalIncidentsCount: number,
+): { status: 'compliant' | 'non_compliant'; nextSteps: string[] } {
+  if (unresolvedNotificationsCount > 0) {
+    return {
+      status: 'non_compliant',
+      nextSteps: [
+        `Complete notifications for ${unresolvedNotificationsCount} pending incident(s)`,
+        'Notify affected individuals without unreasonable delay',
+        'Notify HHS within 60 days of discovery (for breaches affecting 500+ individuals)',
+      ],
+    };
+  }
+  return {
+    status: 'compliant',
+    nextSteps: totalIncidentsCount === 0
+      ? ['No breach incidents recorded — continue monitoring']
+      : ['All breach notifications are up to date'],
+  };
+}
+
 // Check types for HIPAA compliance self-assessment
 const COMPLIANCE_CHECK_TYPES = [
   'mfa_enforcement',
@@ -801,25 +829,12 @@ export function registerComplianceRoutes(app: Express) {
           id: 'breach_notifications',
           name: 'Breach Notification Tracking',
           description: 'Track required notifications to individuals, HHS, and media',
-          status: unresolvedNotifications.length > 0
-            ? 'non_compliant'
-            : breachIncidentsList.length > 0
-              ? 'compliant'
-              : 'not_assessed',
+          ...computeBreachNotificationStatus(unresolvedNotifications.length, breachIncidentsList.length),
           details: {
             totalIncidents: breachIncidentsList.length,
             pendingNotifications: unresolvedNotifications.length,
             openBreaches: openBreaches.length,
           },
-          nextSteps: unresolvedNotifications.length > 0
-            ? [
-                `Complete notifications for ${unresolvedNotifications.length} pending incident(s)`,
-                'Notify affected individuals without unreasonable delay',
-                'Notify HHS within 60 days of discovery (for breaches affecting 500+ individuals)',
-              ]
-            : breachIncidentsList.length === 0
-              ? ['No breach incidents recorded — continue monitoring']
-              : ['All breach notifications are up to date'],
           regulation: '45 CFR 164.404-408',
         },
       ];

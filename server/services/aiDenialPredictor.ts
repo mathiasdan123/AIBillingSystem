@@ -32,13 +32,103 @@ export interface DenialPredictionResult {
   analyzedAt: string;
 }
 
-interface ClaimInput {
+export interface ClaimInput {
   id: number;
   claimNumber?: string | null;
   totalAmount: string;
   status?: string | null;
   insuranceId?: number | null;
+  /** Name of the payer the CLAIM is billed to (claims.insuranceId -> insurances.name). */
+  insuranceName?: string | null;
+  /**
+   * Date of the treatment session the claim was generated from
+   * (treatment_sessions.session_date, YYYY-MM-DD), when it has one. The
+   * claims table itself carries no date of service: the dates live on the
+   * line items, and this is the fallback for a line without one.
+   */
+  sessionDate?: string | null;
   sessionId?: number | null;
+}
+
+/**
+ * The payer the analysis should reason about: the claim's own payer first,
+ * the patient's chart plan only when the claim carries none (QA demo pass
+ * 2026-11-19, item 5: the re-analysis after "Submit Anyway" used the chart's
+ * insurance instead of the claim's).
+ */
+export function resolvePayerForAnalysis(
+  claim: Pick<ClaimInput, 'insuranceName'>,
+  patient: Pick<PatientInput, 'insuranceProvider'>,
+): { label: string; source: 'claim' | 'patient_chart' | 'unknown' } {
+  const claimPayer = claim.insuranceName?.trim();
+  if (claimPayer) return { label: claimPayer, source: 'claim' };
+  const chartPayer = patient.insuranceProvider?.trim();
+  if (chartPayer) return { label: chartPayer, source: 'patient_chart' };
+  return { label: 'Unknown', source: 'unknown' };
+}
+
+export interface ServiceDateCoverage {
+  /** One date per line item that has one (its own, else the session's), plus the session date when there are no lines. */
+  dates: string[];
+  datedLines: number;
+  /** Lines with no date of their own and no session date to fall back on. */
+  undatedLines: number;
+  /** Lines with no date of their own that took the session date. */
+  linesFromSession: number;
+  hasSessionDate: boolean;
+}
+
+/**
+ * Where the analysis gets service dates from (the claims table has none):
+ * each line item's own date, else the linked session's date. A line with
+ * neither is undated and is reported, never silently dropped.
+ */
+export function serviceDateCoverage(
+  claim: Pick<ClaimInput, 'sessionDate'>,
+  lineItems: Pick<LineItemInput, 'dateOfService'>[],
+): ServiceDateCoverage {
+  const sessionDate = claim.sessionDate?.trim() || null;
+  const dates: string[] = [];
+  let datedLines = 0;
+  let undatedLines = 0;
+  let linesFromSession = 0;
+  for (const li of lineItems) {
+    if (li.dateOfService) {
+      dates.push(li.dateOfService);
+      datedLines++;
+    } else if (sessionDate) {
+      dates.push(sessionDate);
+      linesFromSession++;
+    } else {
+      undatedLines++;
+    }
+  }
+  if (lineItems.length === 0 && sessionDate) dates.push(sessionDate);
+  return { dates, datedLines, undatedLines, linesFromSession, hasSessionDate: !!sessionDate };
+}
+
+/**
+ * The line items with the date each one effectively has: its own, else the
+ * linked session's. With no line items, a lone entry for the session date.
+ * This is the one date set the prompt, the timely-filing rule and the
+ * output guard (sanitizeDateAdvice) all use, so a fabricated "future date
+ * of service" finding is judged against the same dates the model was shown.
+ */
+export function effectiveLineDates(
+  claim: Pick<ClaimInput, 'sessionDate'>,
+  lineItems: Pick<LineItemInput, 'dateOfService'>[],
+): Pick<LineItemInput, 'dateOfService'>[] {
+  const sessionDate = claim.sessionDate?.trim() || null;
+  if (lineItems.length === 0) return sessionDate ? [{ dateOfService: sessionDate }] : [];
+  return lineItems.map((li) => ({ dateOfService: li.dateOfService || sessionDate || null }));
+}
+
+/** Back-compat name: the dates serviceDateCoverage can see. */
+export function effectiveServiceDates(
+  claim: Pick<ClaimInput, 'sessionDate'>,
+  lineItems: Pick<LineItemInput, 'dateOfService'>[],
+): string[] {
+  return serviceDateCoverage(claim, lineItems).dates;
 }
 
 interface LineItemInput {
@@ -220,11 +310,32 @@ function runRuleBasedChecks(
     });
   }
 
-  // Check for timely filing (basic check using date of service)
-  if (lineItems.length > 0) {
-    const oldestService = lineItems
-      .filter((li) => li.dateOfService)
-      .map((li) => new Date(li.dateOfService!))
+  // Dates of service: each line's own date, else the linked session's. A
+  // line with neither is reported. (With no line items at all, the "no line
+  // items" issue above already says it.)
+  const coverage = serviceDateCoverage(claim, lineItems);
+  const serviceDates = coverage.dates;
+  if (lineItems.length > 0 && coverage.undatedLines > 0) {
+    if (coverage.datedLines === 0) {
+      issues.push({
+        category: "Missing Data",
+        description: "No date of service on any line item, and the claim has no linked session date",
+        suggestion: "Set the date of service on each service line before submitting; payers reject service lines without one",
+        severity: "critical",
+      });
+    } else {
+      issues.push({
+        category: "Missing Data",
+        description: `${coverage.undatedLines} of ${lineItems.length} line item(s) have no date of service`,
+        suggestion: "Set the date of service on every service line; an undated line is rejected even when the others are dated",
+        severity: "high",
+      });
+    }
+  }
+  if (serviceDates.length > 0) {
+    const oldestService = serviceDates
+      .map((d) => new Date(d))
+      .filter((d) => !Number.isNaN(d.getTime()))
       .sort((a, b) => a.getTime() - b.getTime())[0];
 
     if (oldestService) {
@@ -505,7 +616,7 @@ export async function predictDenial(
             : `Found ${ruleIssues.length} potential issue(s) through rule-based analysis. Configure OPENAI_API_KEY for deeper AI analysis.`,
         analyzedAt: new Date().toISOString(),
       },
-      lineItems
+      effectiveLineDates(claim, lineItems)
     );
   }
 
@@ -518,8 +629,15 @@ export async function predictDenial(
     units: li.units,
     modifier: li.modifier || "None",
     amount: li.amount,
-    dateOfService: li.dateOfService || "Not specified",
+    dateOfService: li.dateOfService || claim.sessionDate || "Not specified",
   }));
+  const payer = resolvePayerForAnalysis(claim, patient);
+  const coverageForPrompt = serviceDateCoverage(claim, lineItems);
+  const uniqueDates = Array.from(new Set(coverageForPrompt.dates)).sort();
+  const dateOfServiceLine =
+    uniqueDates.length === 0
+      ? "Not specified"
+      : `${uniqueDates.join(", ")}${coverageForPrompt.linesFromSession > 0 ? " (some lines take the linked session's date)" : ""}${coverageForPrompt.undatedLines > 0 ? ` (${coverageForPrompt.undatedLines} line(s) undated)` : ""}`;
 
   const soapSummary = soapNote
     ? {
@@ -555,7 +673,8 @@ ${buildDateGuidance()}
 
 CLAIM DETAILS:
 - Total Amount: $${claim.totalAmount}
-- Insurance Provider: ${patient.insuranceProvider || "Unknown"}
+- Date of Service: ${dateOfServiceLine}
+- Insurance Provider (payer this claim is billed to): ${payer.label}${payer.source === 'patient_chart' ? " (from the patient's chart; the claim carries no payer)" : ""}
 - Patient DOB: ${patient.dateOfBirth || "Unknown"}
 
 LINE ITEMS:
@@ -594,6 +713,11 @@ Return a JSON object with this exact structure:
 Only include ADDITIONAL issues not already in the rule-based list. Set riskScore considering BOTH rule-based and your additional findings.`;
 
   try {
+    // No timeout here used to mean this call (which gates the Submit
+    // button's pre-flight risk check on the client) could hang indefinitely
+    // if Anthropic was slow -- the button would spin forever with no error,
+    // and the real submit endpoint was never even reached. 25s keeps a
+    // clean margin under the 30s global request-timeout middleware.
     const response = await client.messages.create({
       model: "claude-haiku-4-5-20251001",
       max_tokens: 1500,
@@ -611,7 +735,7 @@ Only include ADDITIONAL issues not already in the rule-based list. Set riskScore
         },
       ],
       messages: [{ role: "user", content: prompt }],
-    });
+    }, { timeout: 25000 });
 
     const textBlock = response.content.find(
       (b): b is Anthropic.TextBlock => b.type === "text"
@@ -655,7 +779,7 @@ Only include ADDITIONAL issues not already in the rule-based list. Set riskScore
           `Claim analyzed with ${allIssues.length} issue(s) found.`,
         analyzedAt: new Date().toISOString(),
       },
-      lineItems
+      effectiveLineDates(claim, lineItems)
     );
   } catch (error) {
     logger.error("AI denial prediction failed, using rule-based fallback", {
@@ -676,7 +800,7 @@ Only include ADDITIONAL issues not already in the rule-based list. Set riskScore
             : `Found ${ruleIssues.length} potential issue(s). AI-enhanced analysis was unavailable due to an error.`,
         analyzedAt: new Date().toISOString(),
       },
-      lineItems
+      effectiveLineDates(claim, lineItems)
     );
   }
 }

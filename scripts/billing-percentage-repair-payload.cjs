@@ -14,6 +14,13 @@
  * BEFORE Oct 2 and September collections bill at 5%; run it AFTER the Oct 2
  * run and September bills at 6% with October onward at 5%.
  *
+ * VERIFIED 2026-10-26: ran against prod (both --dry-run and for real,
+ * committed) and updated zero practices — both existing practices (Wonder
+ * Kids and the Bright Steps demo) were already stored at 5.00%, so the
+ * September-overcharge scenario the TIMING note warns about did not happen.
+ * Kept, like repair-claim-46-submission-state.ts, as the auditable record
+ * and a re-runnable no-op rather than deleted.
+ *
  * Fed to the prod app container verbatim as `node -e <this file>` by
  * scripts/run-billing-percentage-repair.sh (same mechanism as the Anthem
  * crosswalk repair and the deploy workflow's migration step — the prod image

@@ -6,6 +6,7 @@ import { withAudit } from '../audit';
 import { withMcpMutationGate } from '../confirmation';
 import { rejectIfDemoDataMessage } from '../../services/bulkEligibilityService';
 import type { McpPracticeContext } from '../types';
+import { zonedInstant } from '../../utils/timezone';
 
 export function registerAppointmentTools(
   server: McpServer,
@@ -89,7 +90,7 @@ export function registerAppointmentTools(
           ? new Date(appt.startTime).toISOString().split('T')[0]
           : '';
         const description = input.description
-          || `${appt.title || 'Therapy session'}${startTimeIso ? ` — ${startTimeIso}` : ''}`;
+          || stripeService.neutralAppointmentPaymentDescription(appt.id, startTimeIso || undefined);
         const paymentLink = await stripeService.createPatientPaymentLink({
           amount: Math.round(amountDollars * 100),
           patientName: `${patient.firstName} ${patient.lastName}`,
@@ -121,7 +122,7 @@ export function registerAppointmentTools(
     {
       appointmentId: z.number().describe('The appointment to bill self-pay'),
       amount: z.number().optional().describe('Override amount in dollars. If omitted, computed from appointment_type.price. Max $10,000.'),
-      description: z.string().optional().describe('Free-text invoice description. Auto-generated from session details if omitted.'),
+      description: z.string().optional().describe('Free-text invoice description. Auto-generated as a neutral appointment reference if omitted. This reaches Stripe (payment receipts and dashboard) - never include the patient\'s name or any clinical/treatment detail here.'),
     },
     (input) => createAppointmentSelfPayInvoice(input, context),
   );
@@ -400,7 +401,10 @@ export function registerAppointmentTools(
           throw new Error('Patient not found in this practice.');
         }
         const duration = input.duration || 60;
-        const startTime = new Date(`${input.date}T${input.time}:00`);
+        // The caller's date + time are practice wall clock. `new Date(`${date}T${time}`)`
+        // built the instant in the PROCESS zone (UTC on ECS), booking a "09:00"
+        // request at 9:00 AM UTC = 4:00 AM Eastern. Same helper booking.ts uses.
+        const startTime = zonedInstant(input.date, input.time);
         if (isNaN(startTime.getTime())) {
           throw new Error('Invalid date/time. Use YYYY-MM-DD and HH:MM (24h).');
         }

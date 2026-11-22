@@ -467,8 +467,10 @@ router.post('/waitlist/:id/notify', isAuthenticated, async (req: any, res) => {
       try {
         const { isEmailConfigured } = await import('../email');
         if (isEmailConfigured()) {
-          const nodemailer = await import('nodemailer');
-          const transporter = nodemailer.createTransport({
+          // Shared factory, not a raw SMTP transport: honors EMAIL_PROVIDER=aws
+          // (SES, under the AWS BAA) and the outbound suppression/demo guard.
+          const { createEmailTransporter } = await import('../services/emailTransportFactory');
+          const transporter = createEmailTransporter({
             host: process.env.SMTP_HOST || 'smtp.gmail.com',
             port: parseInt(process.env.SMTP_PORT || '587'),
             secure: process.env.SMTP_SECURE === 'true',
@@ -504,7 +506,7 @@ router.post('/waitlist/:id/notify', isAuthenticated, async (req: any, res) => {
         if (isSMSConfigured()) {
           const smsResult = await sendSMS(
             patient.phone,
-            `Hi ${patient.firstName}! An appointment slot opened at ${practiceName} on ${formattedDate} at ${time}. Reply YES to book or call us ASAP!`
+            `An appointment slot opened at ${practiceName} on ${formattedDate} at ${time}. Reply YES to book or call us ASAP!`
           );
           results.smsSent = smsResult.success;
           if (!smsResult.success) {
@@ -765,8 +767,10 @@ export async function offerSlotToFamily(
         try {
           const { isEmailConfigured } = await import('../email');
           if (isEmailConfigured()) {
-            const nodemailer = await import('nodemailer');
-            const transporter = nodemailer.createTransport({
+            // Shared factory (SES under the AWS BAA when EMAIL_PROVIDER=aws,
+            // plus the outbound suppression/demo guard) -- not a raw SMTP transport.
+            const { createEmailTransporter } = await import('../services/emailTransportFactory');
+            const transporter = createEmailTransporter({
               host: process.env.SMTP_HOST || 'smtp.gmail.com',
               port: parseInt(process.env.SMTP_PORT || '587'),
               secure: process.env.SMTP_SECURE === 'true',
@@ -802,7 +806,7 @@ export async function offerSlotToFamily(
           if (isSMSConfigured()) {
             const smsResult = await sendSMS(
               patient.phone,
-              `Hi ${patient.firstName}! A slot opened at ${practiceName} on ${formattedDate} at ${startTime}. Reply within 24hrs to book!`
+              `A slot opened at ${practiceName} on ${formattedDate} at ${startTime}. Reply within 24hrs to book!`
             );
             if (smsResult.success) notificationSent = true;
           }

@@ -69,6 +69,7 @@ describe('POST /api/appeals — practice context', () => {
   it("populates practice name/NPI/address/phone from storage.getPractice (not the 'Practice' stub)", async () => {
     storageStub.getClaim.mockResolvedValueOnce({
       id: 42,
+      practiceId: 7, // caller's practice — POST /appeals is tenant-checked (2026-11-18)
       status: 'denied',
       patientId: 99,
       denialReason: 'not medically necessary',
@@ -95,7 +96,9 @@ describe('POST /api/appeals — practice context', () => {
     expect(storageStub.getPractice).toHaveBeenCalledWith(7);
     expect(generateAppealMock).toHaveBeenCalledTimes(1);
     const practiceArg = generateAppealMock.mock.calls[0][3];
-    expect(practiceArg).toEqual({
+    // toMatchObject: the practice context also carries the signer
+    // (providerName), which this test does not set up.
+    expect(practiceArg).toMatchObject({
       name: 'Sunrise Therapy',
       npi: '1234567890',
       address: '500 Main St, Springfield, IL',
@@ -106,6 +109,7 @@ describe('POST /api/appeals — practice context', () => {
   it('falls back to safe placeholders when storage.getPractice returns null', async () => {
     storageStub.getClaim.mockResolvedValueOnce({
       id: 42,
+      practiceId: 7,
       status: 'denied',
       patientId: 99,
       denialReason: 'x',
@@ -120,12 +124,18 @@ describe('POST /api/appeals — practice context', () => {
     await request(makeApp()).post('/api/appeals').send({ claimId: 42 }).expect(200);
 
     const practiceArg = generateAppealMock.mock.calls[0][3];
-    expect(practiceArg).toEqual({
+    expect(practiceArg).toMatchObject({
       name: 'Practice',
       npi: null,
       address: null,
       phone: null,
     });
+    // And a letter built on placeholders is never stored as ready.
+    const created = storageStub.createAppeal.mock.calls[0][0];
+    expect(created.status).toBe('draft');
+    expect(created.readinessIssues).toEqual(expect.arrayContaining([
+      'Practice address not on file (Settings → Practice)',
+    ]));
   });
 });
 

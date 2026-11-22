@@ -1,6 +1,12 @@
 /**
  * Sync the Anthem payer_crosswalk rows in an already-seeded database.
- * NOT YET APPLIED to prod.
+ *
+ * VERIFIED 2026-10-26: ran against prod (both --dry-run and for real,
+ * committed) and rewrote zero rows — every canonical row (NY + all 13
+ * states) was already present with the correct trading_partner_id. The seed
+ * fix landed correctly, so this repair was never actually needed; kept, like
+ * repair-claim-46-submission-state.ts, as the auditable record and a
+ * re-runnable no-op rather than deleted.
  *
  * WHAT WAS WRONG
  *

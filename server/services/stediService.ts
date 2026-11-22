@@ -705,6 +705,14 @@ export async function submitClaim(
 
   const payload = build837P(claim, testMode);
 
+  // Unbounded fetch to an external clearinghouse used to hang the Test Run /
+  // Submit button indefinitely (no visible error, no timeout) if Stedi was
+  // slow or unreachable -- the global request-timeout middleware is socket-
+  // idle based and doesn't abort this call. 20s keeps a clean, well under
+  // the 30s middleware ceiling so the caller gets an actual error response.
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 20000);
+
   try {
     // testMode -> validation endpoint: full clearinghouse edits, no
     // transmission. Real submission is the only path that reaches a payer.
@@ -713,6 +721,7 @@ export async function submitClaim(
       method: 'POST',
       headers: getHeaders(stediKey?.apiKey),
       body: JSON.stringify(payload),
+      signal: controller.signal,
     });
 
     if (!response.ok) {
@@ -820,14 +829,17 @@ export async function submitClaim(
         : undefined,
     };
   } catch (error: any) {
+    const timedOut = error?.name === 'AbortError';
     console.error('Stedi claim submission error:', error);
     return {
       success: false,
       claimId: claim.claimId,
       status: 'rejected',
       raw: null,
-      errors: [error.message || 'Network error submitting claim'],
+      errors: [timedOut ? 'Stedi did not respond in time. Please try again.' : (error.message || 'Network error submitting claim')],
     };
+  } finally {
+    clearTimeout(timeoutId);
   }
 }
 

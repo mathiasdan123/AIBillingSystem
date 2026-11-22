@@ -97,6 +97,20 @@ export default function Expenses() {
     return expenseDate.getMonth() === currentMonth.getMonth() &&
            expenseDate.getFullYear() === currentMonth.getFullYear();
   }).reduce((sum: number, expense: any) => sum + parseFloat(expense.amount), 0) || 0;
+  // Real month-over-month comparison (the cards used to carry fixed "+5.2%"
+  // / "-2.1%" strings, shown even on an empty ledger; QA demo pass 2026-11-19).
+  const lastMonthExpenses = userExpenses?.filter((expense: any) => {
+    const expenseDate = new Date(expense.expenseDate);
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    return expenseDate.getMonth() === d.getMonth() && expenseDate.getFullYear() === d.getFullYear();
+  }).reduce((sum: number, expense: any) => sum + parseFloat(expense.amount), 0) || 0;
+  const monthDeltaPct = lastMonthExpenses > 0 ? ((monthlyExpenses - lastMonthExpenses) / lastMonthExpenses) * 100 : null;
+  const monthTrend = monthDeltaPct === null
+    ? null
+    : { up: monthDeltaPct > 0, text: `${monthDeltaPct > 0 ? "+" : ""}${monthDeltaPct.toFixed(1)}%` };
+  const expenseCount = userExpenses?.length ?? 0;
 
   const categorySummary = userExpenses?.reduce((acc: Record<string, number>, expense: any) => {
     const category = expense.aiCategory || expense.category || 'other';
@@ -156,10 +170,10 @@ export default function Expenses() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(totalExpenses)}</div>
-            <div className="flex items-center text-xs text-muted-foreground">
-              <TrendingUp className="w-3 h-3 mr-1 text-healthcare-green-500" />
-              <span className="text-healthcare-green-500">+5.2%</span>
-              <span className="ml-1">from last month</span>
+            <div className="flex items-center text-xs text-muted-foreground" data-testid="text-total-expenses-detail">
+              {expenseCount === 0
+                ? "No expenses recorded yet"
+                : `${expenseCount} expense${expenseCount === 1 ? "" : "s"} recorded`}
             </div>
           </CardContent>
         </Card>
@@ -171,10 +185,20 @@ export default function Expenses() {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{formatCurrency(monthlyExpenses)}</div>
-            <div className="flex items-center text-xs text-muted-foreground">
-              <TrendingDown className="w-3 h-3 mr-1 text-healthcare-green-500" />
-              <span className="text-healthcare-green-500">-2.1%</span>
-              <span className="ml-1">vs last month</span>
+            <div className="flex items-center text-xs text-muted-foreground" data-testid="text-monthly-expenses-detail">
+              {monthTrend ? (
+                <>
+                  {monthTrend.up ? (
+                    <TrendingUp className="w-3 h-3 mr-1 text-red-500" />
+                  ) : (
+                    <TrendingDown className="w-3 h-3 mr-1 text-healthcare-green-500" />
+                  )}
+                  <span className={monthTrend.up ? "text-red-500" : "text-healthcare-green-500"}>{monthTrend.text}</span>
+                  <span className="ml-1">vs last month ({formatCurrency(lastMonthExpenses)})</span>
+                </>
+              ) : (
+                <span>No expenses last month to compare</span>
+              )}
             </div>
           </CardContent>
         </Card>

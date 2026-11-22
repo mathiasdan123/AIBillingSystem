@@ -1,0 +1,188 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Supports swapping OpenAI Whisper and ElevenLabs for Amazon Transcribe and
+  Amazon Polly (server/services/awsTranscribeService.ts,
+  server/services/awsPollyService.ts) - both HIPAA-eligible under the AWS
+  BAA this practice already has, closing the BAA gap those two vendors left
+  open. Inert by default: nothing routes through these until VOICE_PROVIDER
+  and/or TTS_PROVIDER are set to 'aws' on the ECS task definition.
+
+  Creates a short-lived S3 scratch bucket for Transcribe's batch-job input
+  (there is no "send raw audio bytes, get text back" call like Whisper's -
+  the audio has to live in S3 first). A 1-day lifecycle rule backs up the
+  explicit delete the app already does after each job, and the bucket is
+  private and encrypted. Also attaches the IAM permissions the task role
+  needs for Transcribe, S3 (scoped to this bucket only), and Polly.
+
+Parameters:
+  TaskRoleName:
+    Type: String
+    Default: therapybill-ecs-task-role
+    Description: Name of the existing ECS task role to attach this policy to.
+
+  EnvironmentName:
+    Type: String
+    Default: prod
+    AllowedValues: [prod, staging]
+
+Resources:
+
+  TranscribeScratchAccessLogBucket:
+    Type: AWS::S3::Bucket
+    # This bucket IS the access-log destination for TranscribeScratchBucket.
+    # AWS does not recommend (and S3 access logging does not support) a log
+    # bucket logging itself - that's circular. Versioning is skipped for the
+    # same reason as the scratch bucket: these are 90-day-lifecycle log
+    # files, not data that needs point-in-time recovery.
+    #checkov:skip=CKV_AWS_18:This bucket IS the access-log destination; a log bucket logging itself is circular and not supported.
+    #checkov:skip=CKV_AWS_21:Log files on a 90-day lifecycle; versioning adds no value here.
+    Properties:
+      BucketName: !Sub "therapybill-transcribe-scratch-logs-${AWS::AccountId}-${EnvironmentName}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules:
+          - ObjectOwnership: BucketOwnerPreferred
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireOldAccessLogs
+            Status: Enabled
+            ExpirationInDays: 90
+      Tags:
+        - Key: Project
+          Value: TherapyBillAI
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  TranscribeScratchBucketKmsKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub "CMK for therapybill-transcribe-scratch-${EnvironmentName} S3 bucket encryption"
+      EnableKeyRotation: true
+      KeyPolicy:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowRootAccountFullAccess
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:root"
+            Action: "kms:*"
+            Resource: "*"
+          - Sid: AllowTaskRoleUse
+            Effect: Allow
+            Principal:
+              AWS: !Sub "arn:aws:iam::${AWS::AccountId}:role/${TaskRoleName}"
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: "*"
+          - Sid: AllowTranscribeServiceUse
+            Effect: Allow
+            Principal:
+              Service: transcribe.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey*
+            Resource: "*"
+
+  TranscribeScratchBucketKmsKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub "alias/therapybill-transcribe-scratch-${EnvironmentName}"
+      TargetKeyId: !Ref TranscribeScratchBucketKmsKey
+
+  TranscribeScratchBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "therapybill-transcribe-scratch-${AWS::AccountId}-${EnvironmentName}"
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: aws:kms
+              KMSMasterKeyID: !Ref TranscribeScratchBucketKmsKey
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      # Versioning is deliberately left off, not merely defaulted: the app
+      # explicitly deletes each audio object right after its transcription
+      # job completes (awsTranscribeService.ts), for PHI minimization.
+      # Versioning would keep deleted objects' PHI around as noncurrent
+      # versions, defeating that cleanup - the opposite of what versioning
+      # is for on most buckets.
+      #checkov:skip=CKV_AWS_21:Intentional - versioning would retain PHI audio past the app's explicit post-job delete; see comment above.
+      VersioningConfiguration:
+        Status: Suspended
+      LoggingConfiguration:
+        DestinationBucketName: !Ref TranscribeScratchAccessLogBucket
+        LogFilePrefix: transcribe-scratch-access-logs/
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireScratchAudioFast
+            Status: Enabled
+            Prefix: transcribe-scratch/
+            ExpirationInDays: 1
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 1
+      Tags:
+        - Key: Project
+          Value: TherapyBillAI
+        - Key: Environment
+          Value: !Ref EnvironmentName
+
+  AwsSpeechServicesPolicy:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      RoleName: !Ref TaskRoleName
+      PolicyName: AwsTranscribePollyAccess
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: TranscribeBatchJobs
+            Effect: Allow
+            Action:
+              - transcribe:StartTranscriptionJob
+              - transcribe:GetTranscriptionJob
+              - transcribe:DeleteTranscriptionJob
+            Resource: "*" # Transcribe jobs are not individually ARN-addressable before creation; scoped by action set instead.
+
+          - Sid: TranscribeScratchBucketAccess
+            Effect: Allow
+            Action:
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+            Resource: !Sub "${TranscribeScratchBucket.Arn}/*"
+
+          - Sid: TranscribeScratchBucketKms
+            Effect: Allow
+            Action:
+              - kms:Encrypt
+              - kms:Decrypt
+              - kms:GenerateDataKey*
+              - kms:DescribeKey
+            Resource: !GetAtt TranscribeScratchBucketKmsKey.Arn
+
+          - Sid: PollySynthesize
+            Effect: Allow
+            Action:
+              - polly:SynthesizeSpeech
+              - polly:DescribeVoices
+            Resource: "*" # Polly voices/synthesis are not ARN-addressable resources.
+
+Outputs:
+  TranscribeScratchBucketName:
+    Value: !Ref TranscribeScratchBucket
+    Description: Set this as TRANSCRIBE_SCRATCH_BUCKET on the ECS task definition.
+  AttachedToRole:
+    Value: !Ref TaskRoleName

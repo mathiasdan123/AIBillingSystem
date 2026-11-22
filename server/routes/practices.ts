@@ -82,6 +82,7 @@ router.get('/:id/patients-missing-plan-documents', isAuthenticated, async (req: 
       lastName: decryptField(p.lastName) ?? p.lastName,
       email: decryptField(p.email) ?? p.email,
       phone: decryptField(p.phone) ?? p.phone,
+      insuranceProvider: decryptField(p.insuranceProvider) ?? p.insuranceProvider,
     }));
 
     res.json({

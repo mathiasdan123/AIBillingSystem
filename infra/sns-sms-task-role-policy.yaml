@@ -1,0 +1,49 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >
+  Grants the ECS task role permission to send SMS via Amazon SNS
+  (server/services/awsSnsSmsService.ts). Added 2026-10 as an alternative to
+  Twilio's HIPAA BAA, which is priced at $1000/mo and was declined as not
+  worth it at current volume. SNS SMS is HIPAA-eligible under the AWS BAA
+  this practice already has - no separate vendor BAA or monthly fee.
+
+  Inert by default: nothing routes through SNS until SMS_PROVIDER is set to
+  'aws' on the ECS task definition (server/services/smsService.ts falls back
+  to Twilio, or a console-logged mock, otherwise).
+
+  Does NOT create or own the task role itself (therapybill-ecs-task-role is
+  managed outside this repo); this stack only attaches one additional
+  inline policy to it.
+
+Parameters:
+  TaskRoleName:
+    Type: String
+    Default: therapybill-ecs-task-role
+    Description: Name of the existing ECS task role to attach this policy to.
+
+Resources:
+
+  SnsSmsPolicy:
+    Type: AWS::IAM::RolePolicy
+    Properties:
+      RoleName: !Ref TaskRoleName
+      PolicyName: SnsSmsSend
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: PublishSmsToPhoneNumbers
+            Effect: Allow
+            Action:
+              - sns:Publish
+            # SNS's direct-to-phone-number Publish (no topic involved) has no
+            # per-destination ARN to scope to - the phone number is a request
+            # parameter, not a resource. Restricted by action set only, same
+            # as Transcribe/Polly in transcribe-polly-task-role-policy.yaml.
+            # (Checkov's IAM wildcard checks - CKV_AWS_111/CKV_AWS_356 et al -
+            # only run against AWS::IAM::Policy/ManagedPolicy/Role/User/Group,
+            # not AWS::IAM::RolePolicy, so no #checkov:skip is needed here;
+            # confirmed via a local scan, see PR description.)
+            Resource: "*"
+
+Outputs:
+  AttachedToRole:
+    Value: !Ref TaskRoleName

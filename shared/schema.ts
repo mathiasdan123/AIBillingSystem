@@ -81,6 +81,10 @@ export const practices = pgTable("practices", {
   id: serial("id").primaryKey(),
   name: varchar("name").notNull(),
   npi: varchar("npi").unique(),
+  // Default appeal filing window (days after denial) used when the member's
+  // plan documents do not state one. Null = the code's conservative default,
+  // labeled "estimated" in the UI.
+  appealWindowDays: integer("appeal_window_days"),
   taxId: varchar("tax_id"),
   address: text("address"),
   phone: varchar("phone"),
@@ -356,6 +360,11 @@ export const patients = pgTable("patients", {
   // Stripe customer ID for patient billing
   stripeCustomerId: varchar("stripe_customer_id"),
   deletedAt: timestamp("deleted_at"),
+  // Archive (QA 2026-11-18): hidden from the default list, search and pickers,
+  // and blocked from new appointments/claims, but fully retained and
+  // reversible. Distinct from deletedAt, which is the right-to-erasure path
+  // (PHI nulled, row purged after the retention window).
+  archivedAt: timestamp("archived_at"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -833,6 +842,15 @@ export const soapNoteDrafts = pgTable("soap_note_drafts", {
   interventions: jsonb("interventions"),
   location: varchar("location"),
   sessionType: varchar("session_type"),
+  // Suggested billing that came back with the generated S-O-A-P (CPT codes,
+  // activity pairings, time blocks, rationale, estimated total). Saved with
+  // the draft so leaving the page and coming back restores the whole review
+  // state, not just the prose (QA sweep 2026-11-18: codes/units/total reset
+  // to 0 on draft restore). Shape: client/src/lib/soapDraftBilling.ts.
+  // PHI (activity descriptions + rationale beside patient_id): stored as one
+  // encrypted {ciphertext, iv, tag} object via encryptSoapDraftRecord, like
+  // the prose columns above; never plaintext.
+  billing: jsonb("billing"),
   lastSavedAt: timestamp("last_saved_at").defaultNow(),
   // Legacy scaffold columns — unused.
   draftName: varchar("draft_name"),
@@ -842,7 +860,20 @@ export const soapNoteDrafts = pgTable("soap_note_drafts", {
   aiOptimization: jsonb("ai_optimization"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
-});
+}, (table) => [
+  // One draft per therapist per patient. storage.upsertSoapDraft relies on
+  // this as its ON CONFLICT target; without it Postgres rejects the upsert
+  // with "there is no unique or exclusion constraint matching the ON
+  // CONFLICT specification" and autosave fails on every call (QA #3).
+  // migrations/add_soap_draft_columns.sql declared the same index by hand,
+  // but production applies the schema via `drizzle-kit push`, which only
+  // reads this file. CREATE UNIQUE INDEX fails if legacy duplicate
+  // (therapist_id, patient_id) rows exist, so the deploy migration step
+  // runs scripts/dedupe-soap-drafts-payload.cjs (report only) ahead of
+  // db:push and halts the deploy if any are found.
+  uniqueIndex("idx_soap_draft_therapist_patient").on(table.therapistId, table.patientId),
+  index("idx_soap_draft_practice").on(table.practiceId),
+]);
 
 // Appointments / Calendar
 export const appointments = pgTable("appointments", {
@@ -1798,6 +1829,18 @@ export const appeals = pgTable("appeals", {
   status: varchar("status").default("draft").notNull(), // draft, ready, submitted, in_review, won, lost, partial
   denialCategory: varchar("denial_category"), // medical_necessity, authorization, coding, timely_filing, etc.
   deadlineDate: date("deadline_date"), // Filing deadline (usually 60-180 days from denial)
+  // How deadlineDate was arrived at (QA 2026-11-18: it used to be silently
+  // creation + 60 days with no denial date or payer rule behind it).
+  denialDate: date("denial_date"), // date the payer denied, entered by the biller or taken from the 835
+  deadlineSource: varchar("deadline_source"), // payer_policy | practice_default | estimated | manual
+  deadlinePolicyDays: integer("deadline_policy_days"), // days after denialDate the source allows
+  // Facts the biller supplied in the Create Appeal flow that no record can
+  // supply (urgent service, retro-auth request, extra grounds). The letter
+  // may only assert these when they are here. See appealGroundingService.
+  groundingInputs: jsonb("grounding_inputs"),
+  // Why the letter is not "ready" (placeholders, missing records, unsupported
+  // assertions). Empty array = ready. Recomputed whenever the letter changes.
+  readinessIssues: jsonb("readiness_issues"), // string[]
   submittedDate: timestamp("submitted_date"),
   resolvedDate: timestamp("resolved_date"),
   appealedAmount: decimal("appealed_amount", { precision: 10, scale: 2 }),
@@ -2279,6 +2322,15 @@ export const baaRecords = pgTable("baa_records", {
   signedDate: varchar("signed_date").notNull(),
   expirationDate: varchar("expiration_date").notNull(),
   status: varchar("status").default("active"), // active, expired, terminated
+  // True for a BAA TherapyBill AI (the platform operator) holds with a
+  // vendor that underlies every practice's infrastructure (AWS, Google
+  // Workspace) - not something any individual practice signed. These
+  // records are created under one practiceId (whichever admin entered
+  // them) but are visible to every practice's BAA tracker and HIPAA
+  // self-assessment, including the demo practice. Defaults false so
+  // existing/ordinary practice-specific BAAs (Stedi, Twilio, etc.) are
+  // unaffected. Only a platform admin may set this (see baaRoutes.ts).
+  isPlatformWide: boolean("is_platform_wide").default(false),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 });
@@ -3414,6 +3466,13 @@ export const remittanceLineItems = pgTable("remittance_line_items", {
   /** CLP07 payer claim control number — the payer's own id, kept for appeals/reference. */
   payerClaimId: varchar("payer_claim_id"),
   /**
+   * CLP02 claim status: 1/2/3 processed as primary/secondary/tertiary,
+   * 4 denied, 22 reversal of a previous payment. '4' is what makes a line a
+   * DENIAL rather than a contractual write-off (see eraDenialService).
+   * Nullable: legacy rows and JSON uploads without it are never denials.
+   */
+  claimStatusCode: varchar("claim_status_code"),
+  /**
    * How the line was matched: 'claim_number', a scored signal list such as
    * 'exact_name+service_date+cpt', or 'manual'. NULL on rows matched before
    * this column existed (those payments were posted under the old fused path).
@@ -3428,12 +3487,32 @@ export const remittanceLineItems = pgTable("remittance_line_items", {
    */
   matchReviewReason: varchar("match_review_reason"),
   /**
-   * When the automated path recorded this line's payment posting. Lets a
-   * match-only pass (ERA_AUTO_POST=false) link lines without posting, and the
-   * Auto-Match button later post exactly those — never a line posted already,
-   * never a legacy row (matchType NULL) posted under the old fused path.
+   * When a payment posting for this line was recorded. The automated path
+   * sets it around its own postPayment (lets a match-only pass link lines
+   * without posting, and the Auto-Match button later post exactly those —
+   * never a line posted already, never a legacy row (matchType NULL) posted
+   * under the old fused path). Since #497 the manual match route sets it
+   * too, right after ITS postPayment succeeded: the line's "posting
+   * confirmed" marker that the denial step, the Retry denial route and the
+   * remittance completion rule require. A matched line without it is
+   * "needs manual review" — never inferred from amounts, dates, check
+   * numbers or other postings.
    */
   autoPostedAt: timestamp("auto_posted_at"),
+  /**
+   * CLP02 4 (denied) lines: the denial was applied to the claim AND the
+   * appeal draft / follow-up pipeline completed. NULL with a denialError
+   * means the denial is still pending; the line's Retry denial button or
+   * the Auto-Match button re-runs it. Never touches the posting.
+   */
+  denialAppliedAt: timestamp("denial_applied_at"),
+  /**
+   * The "denial pending" marker, written in the same request immediately
+   * after this line's postPayment succeeded (DENIAL_PENDING_MARKER), then
+   * replaced by the step's error text if it failed, and cleared when the
+   * denial is applied. Only lines carrying it are ever retried.
+   */
+  denialError: text("denial_error"),
   createdAt: timestamp("created_at").defaultNow(),
 }, (table) => [
   index("idx_remittance_line_items_remittance").on(table.remittanceId),
@@ -3974,8 +4053,16 @@ export const claimFollowUps = pgTable("claim_follow_ups", {
   priority: varchar("priority").default("medium").notNull(), // low, medium, high, urgent
   notes: text("notes"),
   assignedTo: varchar("assigned_to").references(() => users.id),
+  // Date-only semantics: stored as UTC midnight of the calendar day the
+  // biller picked (parseDateOnly). Render from the YYYY-MM-DD part, never
+  // through a local-time Date, or 2027-01-17 shows as Jan 16 in Eastern.
   dueDate: timestamp("due_date"),
   completedAt: timestamp("completed_at"),
+  // Who marked it complete (QA 2026-11-18 work-queue actions).
+  completedBy: varchar("completed_by").references(() => users.id),
+  // Hidden from the open queue until this instant (start of the chosen day
+  // in the practice timezone); null = not snoozed.
+  snoozedUntil: timestamp("snoozed_until"),
   createdAt: timestamp("created_at").defaultNow(),
   updatedAt: timestamp("updated_at").defaultNow(),
 }, (table) => [
@@ -4007,6 +4094,37 @@ export const insertClaimFollowUpSchema = createInsertSchema(claimFollowUps).omit
 });
 export type ClaimFollowUp = typeof claimFollowUps.$inferSelect;
 export type InsertClaimFollowUp = z.infer<typeof insertClaimFollowUpSchema>;
+
+// Claim Events — append-only history behind the claim detail's Status
+// timeline. The claims row only carries the LATEST state (one submittedAt,
+// one denialReason that reopen clears), so the timeline could show nothing
+// but Created/Submitted/Paid and lost the denial, the appeal, the internal
+// notes and the reopen (QA 2026-11-18, denial follow-up sweep). Every
+// transition appends a row here; nothing is ever updated or deleted.
+// eventType: denied, reopened, submitted, appeal_created, appeal_submitted,
+// appeal_resolved, note_added. metadata holds the small structured facts
+// the UI shows (reason, appealId, level, excerpt); PHI-bearing text stays as
+// short as the summary needs.
+export const claimEvents = pgTable("claim_events", {
+  id: serial("id").primaryKey(),
+  claimId: integer("claim_id").references(() => claims.id).notNull(),
+  practiceId: integer("practice_id").references(() => practices.id).notNull(),
+  eventType: varchar("event_type").notNull(),
+  summary: text("summary").notNull(),
+  metadata: jsonb("metadata"),
+  createdBy: varchar("created_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => [
+  index("idx_claim_events_claim").on(table.claimId, table.createdAt),
+  index("idx_claim_events_practice").on(table.practiceId, table.createdAt),
+]);
+
+export const insertClaimEventSchema = createInsertSchema(claimEvents).omit({
+  id: true,
+  createdAt: true,
+});
+export type ClaimEvent = typeof claimEvents.$inferSelect;
+export type InsertClaimEvent = z.infer<typeof insertClaimEventSchema>;
 
 // ==================== Staff Time Tracking ====================
 

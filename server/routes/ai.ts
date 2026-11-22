@@ -22,6 +22,7 @@ import { Router, type Response, type NextFunction } from 'express';
 import { storage } from '../storage';
 import { isAuthenticated } from '../replitAuth';
 import logger from '../services/logger';
+import { normalizeActivityAssessments, deriveGlobalAssessment } from '../utils/soapAssessment';
 import AIReimbursementPredictor from '../aiReimbursementPredictor';
 import { generateSoapNoteAndBilling } from '../services/aiSoapBillingService';
 import { transcribeAudioBase64, isVoiceTranscriptionAvailable } from '../services/voiceService';
@@ -497,19 +498,12 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
   } = req.body;
 
   // Per-activity therapist narratives ("what happened / how did the patient
-  // respond") — the primary objective input per clinician feedback. Only the
-  // name + narrative go to the model; structured ratings stay optional data.
-  const activityDetails = Array.isArray(activityAssessments)
-    ? activityAssessments
-        .filter((a: any) => a && typeof a.name === 'string')
-        .map((a: any) => ({
-          name: String(a.name),
-          response:
-            typeof a.response === 'string' && a.response.trim()
-              ? a.response.trim().slice(0, 2000)
-              : undefined,
-        }))
-    : undefined;
+  // respond") — the primary objective input per clinician feedback — PLUS the
+  // per-activity structured ratings. This used to keep only name + narrative,
+  // which dropped "Minimal Assist" chosen via Apply to All / per exercise on
+  // the floor (post-deploy retest of #464, 2026-11-18); the generators then
+  // said assistance was not assessed. See server/utils/soapAssessment.ts.
+  const activityDetails = normalizeActivityAssessments(activityAssessments);
 
   if (!patientId || !activities || !Array.isArray(activities) || activities.length === 0) {
     return res.status(400).json({
@@ -527,6 +521,16 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
   const soapUser = await storage.getUser(req.user?.claims?.sub);
   if (!soapUser?.practiceId) {
     return res.status(403).json({ error: 'No practice context for this user' });
+  }
+  // Demo-only test fixture (therapybill-qa #2): `forceFallback: true` runs the
+  // rule-based fallback generator instead of the model, so the outage path can
+  // be exercised in the demo. Silently ignored for every non-demo practice; a
+  // real practice can never opt out of AI generation through this flag.
+  let forceFallback = false;
+  if (req.body?.forceFallback === true) {
+    const soapPractice = await storage.getPractice(soapUser.practiceId);
+    forceFallback = soapPractice?.isDemo === true;
+    logger.info('SOAP forceFallback requested', { practiceId: soapUser.practiceId, honored: forceFallback });
   }
 
   // Response transport. Either way we flush headers immediately so the ALB
@@ -576,18 +580,32 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
         practiceId: soapUser.practiceId,
         activities,
         activityDetails,
-        mood: mood || 'Cooperative',
+        // Do NOT default a blank mood/planNextSteps to a plausible-sounding
+        // value here — that fabricates therapist input the service never
+        // receives as blank, silently defeating both the prompt's own
+        // "field not recorded, omit this detail" instructions and the
+        // mood-fabrication backstop (whose hasMood check trusts this value).
+        // '' (not a fabricated phrase) preserves the required `string` type
+        // while every downstream falsy check treats it as "not provided".
+        mood: mood || '',
         caregiverReport,
         duration,
         location: location || 'Clinic',
-        assessment: assessment || {
-          performance: 'Stable',
-          assistance: 'Minimal Assist',
-          strength: 'Adequate',
-          motorPlanning: 'Mild Difficulty',
-          sensoryRegulation: 'Needed Minimal Supports'
-        },
-        planNextSteps: planNextSteps || 'Continue Current Goals',
+        // An absent assessment object means nothing was documented. The old
+        // default here ("Stable", "Minimal Assist", "Adequate", ...) invented
+        // therapist observations the generators then narrated as fact. Empty
+        // strings keep the required shape and are treated as "not documented"
+        // by both the prompt builder and the fallback template.
+        //
+        // A blank global field IS filled from the per-activity ratings when
+        // every rated activity agrees (deriveGlobalAssessment): that value is
+        // the therapist's own entry, made through a different control, not
+        // an invented default. Disagreement leaves the global blank.
+        assessment: deriveGlobalAssessment(
+          assessment && typeof assessment === 'object' ? assessment : null,
+          activityDetails,
+        ),
+        planNextSteps: planNextSteps || '',
         nextSessionFocus,
         homeProgram,
         ratePerUnit
@@ -598,6 +616,7 @@ router.post('/ai/generate-soap-billing', isAuthenticated, async (req: any, res) 
         onProgress: wantStream ? undefined : writeKeepalive,
         onTextDelta: wantStream ? (t) => sendEvent('delta', { text: t }) : undefined,
         signal: abort.signal,
+        forceFallback,
       }
     );
 

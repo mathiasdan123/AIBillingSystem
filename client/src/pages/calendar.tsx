@@ -12,6 +12,7 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/useAuth";
 import { apiRequest } from "@/lib/queryClient";
 import { useLocation } from "wouter";
 import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown, ShieldCheck, Loader2, LogIn, LogOut, CalendarCheck, DollarSign, FileText } from "lucide-react";
@@ -28,6 +29,33 @@ interface AvailabilitySlot {
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 8);
 
+// YYYY-MM-DD of `d` in the BROWSER's timezone, for <input type="date">.
+// `toISOString().split("T")[0]` is the UTC calendar day, which after 7 PM
+// Eastern is already tomorrow — the dialog then defaulted to the wrong date.
+const toLocalDateInput = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+// Blank new-appointment form. Pulled out so the initial state and the
+// post-save reset cannot drift apart.
+const emptyNewAppointment = () => ({
+  patientId: "",
+  therapistId: "",
+  date: toLocalDateInput(new Date()),
+  startTime: "09:00",
+  type: "Individual Therapy",
+  // Optional FK to appointmentTypes catalog. Empty string = no catalog row;
+  // legacy behavior preserved (type string + 60min default).
+  appointmentTypeId: "",
+  // Minutes. String to match Select value contract; coerced to number on POST.
+  durationMinutes: "45",
+  notes: "",
+  locationId: "",
+  recurrencePattern: "none",
+  recurrenceEndType: "occurrences",
+  numberOfOccurrences: "12",
+  recurrenceEndDate: "",
+});
+
 const CANCELLATION_REASONS = [
   { value: "patient_request", label: "Patient Request" },
   { value: "sick", label: "Sick" },
@@ -40,6 +68,7 @@ const CANCELLATION_REASONS = [
 export default function CalendarPage() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [currentDate, setCurrentDate] = useState(new Date());
   // Default to day view on mobile (screen width < 768px). Month view is
@@ -64,24 +93,7 @@ export default function CalendarPage() {
     { dayOfWeek: 5, startTime: "09:00", endTime: "17:00" },
   ]);
 
-  const [newAppointment, setNewAppointment] = useState({
-    patientId: "",
-    therapistId: "",
-    date: new Date().toISOString().split("T")[0],
-    startTime: "09:00",
-    type: "Individual Therapy",
-    // Optional FK to appointmentTypes catalog. Empty string = no catalog row;
-    // legacy behavior preserved (type string + 60min default).
-    appointmentTypeId: "",
-    // Minutes. String to match Select value contract; coerced to number on POST.
-    durationMinutes: "45",
-    notes: "",
-    locationId: "",
-    recurrencePattern: "none" as "none" | "weekly" | "biweekly" | "monthly",
-    recurrenceEndType: "occurrences" as "occurrences" | "endDate",
-    numberOfOccurrences: "12",
-    recurrenceEndDate: "",
-  });
+  const [newAppointment, setNewAppointment] = useState(emptyNewAppointment());
   const [isNewPatient, setIsNewPatient] = useState(false);
   const [newPatientData, setNewPatientData] = useState({ firstName: "", lastName: "", phone: "", email: "", insuranceProvider: "", insuranceId: "", policyNumber: "", groupNumber: "", effectiveDate: "" });
   const [patientSearchOpen, setPatientSearchOpen] = useState(false);
@@ -123,14 +135,22 @@ export default function CalendarPage() {
   const [seriesAction, setSeriesAction] = useState<"cancel" | "delete" | null>(null);
   const [seriesActionAppointment, setSeriesActionAppointment] = useState<Appointment | null>(null);
 
-  // Fetch patients for the dropdown
+  // Fetch patients: name lookups for every appointment plus the picker.
+  // `archived=include` (mirrors #474 on Claims): this list resolves the
+  // patient NAME on existing records, and those belong to the patient after
+  // the patient is archived. The default list excludes archived patients,
+  // which made their existing records read "Patient #n" (QA 2026-11-18).
+  // Pickers that create something new use `pickablePatients` instead.
+  // The key keeps "/api/patients" first so the existing invalidations
+  // (new-patient creation here and in WalkInDialog) still hit it.
   const { data: patients = [] } = useQuery<any[]>({
-    queryKey: ["/api/patients"],
+    queryKey: ["/api/patients", "?archived=include"],
     queryFn: async () => {
-      const res = await apiRequest("GET", "/api/patients");
+      const res = await apiRequest("GET", "/api/patients?archived=include");
       return res.json();
     },
   });
+  const pickablePatients = patients.filter((p: any) => !p.archivedAt);
 
   // Fetch therapists for the dropdown
   // Use /api/therapists (available to all authenticated users) rather than
@@ -142,6 +162,19 @@ export default function CalendarPage() {
       return res.json();
     },
   });
+
+  // Therapist to pre-select in the New Appointment dialog when the user has
+  // not picked one: the logged-in user if they are a therapist here (a solo
+  // practitioner should never have to pick themselves), else the practice's
+  // only therapist. Empty when there are several to choose from, or none.
+  // Derived (not written into state) so it tracks the therapists query
+  // resolving after the dialog is already open.
+  const defaultTherapistId = (() => {
+    if (user?.id && therapists.some((t: any) => String(t.id) === String(user.id))) return String(user.id);
+    if (therapists.length === 1) return String(therapists[0].id);
+    return "";
+  })();
+  const selectedTherapistId = newAppointment.therapistId || defaultTherapistId;
 
   // Fetch locations for the dropdown
   const { data: locations = [] } = useQuery<any[]>({
@@ -233,7 +266,7 @@ export default function CalendarPage() {
         ? `Created ${data.seriesInfo.totalCreated} appointments (${data.seriesInfo.recurrenceDescription})`
         : "Appointment created successfully.";
       toast({ title: "Appointment Scheduled", description: desc });
-      setNewAppointment({ patientId: "", therapistId: "", date: new Date().toISOString().split("T")[0], startTime: "09:00", type: "Individual Therapy", appointmentTypeId: "", durationMinutes: "45", notes: "", locationId: "", recurrencePattern: "none", recurrenceEndType: "occurrences", numberOfOccurrences: "12", recurrenceEndDate: "" });
+      setNewAppointment(emptyNewAppointment());
       setIsNewPatient(false);
       setNewPatientData({ firstName: "", lastName: "", phone: "", email: "", insuranceProvider: "", insuranceId: "", policyNumber: "", groupNumber: "", effectiveDate: "" });
     },
@@ -354,6 +387,18 @@ export default function CalendarPage() {
   });
 
   const handleCreateAppointment = async () => {
+    // A therapist is required whenever the practice has any to choose from:
+    // superbills, provider analytics and the SOAP-note handoff all key off
+    // appointment.therapistId, so an unassigned appointment is a billing
+    // dead end later. Checked FIRST so a validation miss never leaves behind
+    // a newly created patient with no appointment. When the practice has no
+    // therapist users at all (brand-new practice, or the demo before it had
+    // one) the dialog says so and the appointment is saved unassigned
+    // rather than making scheduling impossible.
+    if (therapists.length > 0 && !selectedTherapistId) {
+      toast({ title: "Select a therapist", description: "Choose who this appointment is with.", variant: "destructive" });
+      return;
+    }
     let patientId = newAppointment.patientId;
 
     // If creating a new patient, do that first
@@ -368,7 +413,6 @@ export default function CalendarPage() {
           lastName: newPatientData.lastName.trim(),
           phone: newPatientData.phone.trim() || null,
           email: newPatientData.email.trim() || null,
-          dateOfBirth: "2000-01-01",
           // Optional insurance — only sent if the user filled them in.
           // Blank strings would otherwise persist as "" and confuse the
           // claim scrubber's "missing insurance" check.
@@ -400,7 +444,7 @@ export default function CalendarPage() {
 
     const payload: any = {
       patientId: parseInt(patientId),
-      therapistId: newAppointment.therapistId || null,
+      therapistId: selectedTherapistId || null,
       locationId: newAppointment.locationId ? parseInt(newAppointment.locationId) : null,
       // Catalog FK (if the user picked from the configured types) so reports
       // and analytics can roll up by canonical type. Null when the user used
@@ -527,21 +571,28 @@ export default function CalendarPage() {
     ? appointments
     : appointments.filter(apt => (apt as any).locationId === parseInt(filterLocationId));
 
-  const getAppointmentsForDate = (date: Date) => {
-    const y = date.getFullYear(), m = date.getMonth(), d = date.getDate();
-    return filteredAppointments.filter(apt => {
-      const s = new Date(apt.startTime);
-      return s.getUTCFullYear() === y && s.getUTCMonth() === m && s.getUTCDate() === d;
-    });
-  };
+  // TIMEZONE: appointment start/end times are stored as UTC instants (the
+  // dialog below sends `toISOString()`, the server stores the instant, and
+  // every other surface — the month view, the patient-details banner, the
+  // front desk — renders them with the browser's LOCAL getters). The day/week
+  // grid and the lists used to read `getUTCHours()`/`getUTCDate()` instead,
+  // so a 9:00 AM Eastern appointment (14:00Z) drew at 2:00 PM here while
+  // the patient banner said 9:00 AM, and anything after 7 PM Eastern landed
+  // on the next day's column. Everything on this page now uses local
+  // getters, the same as the rest of the app (QA sweep 2026-11-18).
+  const isSameLocalDay = (a: Date, b: Date) =>
+    a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+  const getAppointmentsForDate = (date: Date) =>
+    filteredAppointments.filter(apt => isSameLocalDay(new Date(apt.startTime), date));
 
   const getAppointmentStyle = (apt: Appointment) => {
     const start = new Date(apt.startTime);
     const end = new Date(apt.endTime);
-    const sh = start.getUTCHours();
-    const sm = start.getUTCMinutes();
-    const eh = end.getUTCHours();
-    const em = end.getUTCMinutes();
+    const sh = start.getHours();
+    const sm = start.getMinutes();
+    const eh = end.getHours();
+    const em = end.getMinutes();
     const top = Math.max(0, ((sh - 8) * 60 + sm) * (64 / 60));
     const height = ((eh - sh) * 60 + (em - sm)) * (64 / 60);
     return { top: top + "px", height: Math.max(height, 24) + "px" };
@@ -587,8 +638,8 @@ export default function CalendarPage() {
 
   const formatTime = (dt: string | Date) => {
     const d = new Date(dt);
-    const h = d.getUTCHours();
-    const m = d.getUTCMinutes();
+    const h = d.getHours();
+    const m = d.getMinutes();
     const ampm = h >= 12 ? "PM" : "AM";
     const h12 = h > 12 ? h - 12 : h === 0 ? 12 : h;
     return `${h12}:${String(m).padStart(2, "0")} ${ampm}`;
@@ -665,7 +716,7 @@ export default function CalendarPage() {
               <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
                 <DialogHeader>
                   <DialogTitle>Schedule New Appointment</DialogTitle>
-                  <DialogDescription>Create a new 1-hour therapy session.</DialogDescription>
+                  <DialogDescription>Create a new {parseInt(newAppointment.durationMinutes, 10) || 45}-minute therapy session.</DialogDescription>
                 </DialogHeader>
                 <div className="space-y-4 py-4">
                   <div className="space-y-2">
@@ -800,7 +851,7 @@ export default function CalendarPage() {
                                 })()
                               : (isNewPatient && newPatientData.firstName)
                                 ? `${newPatientData.firstName} ${newPatientData.lastName} (new)`
-                                : `Click to select patient (${patients.length} available)`}
+                                : `Click to select patient (${pickablePatients.length} available)`}
                             <ChevronsUpDown className="ml-2 h-5 w-5 shrink-0 opacity-70" />
                           </Button>
                         </PopoverTrigger>
@@ -859,7 +910,7 @@ export default function CalendarPage() {
                                 </div>
                               </CommandEmpty>
                               <CommandGroup>
-                                {patients.map((p: any) => (
+                                {pickablePatients.map((p: any) => (
                                   <CommandItem
                                     key={p.id}
                                     value={`${p.firstName} ${p.lastName}`}
@@ -884,9 +935,11 @@ export default function CalendarPage() {
                     )}
                   </div>
                   <div className="space-y-2">
-                    <Label>Therapist</Label>
-                    <Select value={newAppointment.therapistId} onValueChange={(v) => setNewAppointment({ ...newAppointment, therapistId: v })}>
-                      <SelectTrigger><SelectValue placeholder="Select a therapist" /></SelectTrigger>
+                    <Label>Therapist{therapists.length > 0 && <span className="text-red-500 ml-0.5">*</span>}</Label>
+                    <Select value={selectedTherapistId} onValueChange={(v) => setNewAppointment({ ...newAppointment, therapistId: v })} disabled={therapists.length === 0}>
+                      <SelectTrigger data-testid="select-therapist">
+                        <SelectValue placeholder={therapists.length === 0 ? "No therapists available" : "Select a therapist"} />
+                      </SelectTrigger>
                       <SelectContent>
                         {therapists.map((t: any) => (
                           <SelectItem key={t.id} value={String(t.id)}>
@@ -895,6 +948,12 @@ export default function CalendarPage() {
                         ))}
                       </SelectContent>
                     </Select>
+                    {therapists.length === 0 && (
+                      <p className="text-xs text-muted-foreground" data-testid="therapist-empty-hint">
+                        This practice has no therapist users yet, so the appointment will be saved without one.
+                        Invite therapists under Settings to assign appointments.
+                      </p>
+                    )}
                   </div>
                   {locations.length > 0 && (
                     <div className="space-y-2">
@@ -1431,13 +1490,7 @@ export default function CalendarPage() {
         {(() => {
           const today = new Date();
           const todayAppts = filteredAppointments
-            .filter(apt => {
-              const s = new Date(apt.startTime);
-              return s.getUTCFullYear() === today.getFullYear() &&
-                     s.getUTCMonth() === today.getMonth() &&
-                     s.getUTCDate() === today.getDate() &&
-                     apt.status !== "cancelled";
-            })
+            .filter(apt => isSameLocalDay(new Date(apt.startTime), today) && apt.status !== "cancelled")
             .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
 
           if (todayAppts.length === 0) return null;
@@ -1738,7 +1791,8 @@ export default function CalendarPage() {
                             appointmentId: String(a.id),
                           });
                           if (a.startTime) {
-                            params.set('date', new Date(a.startTime).toISOString().split('T')[0]);
+                            // Local calendar day — the UTC day is tomorrow for evening sessions.
+                            params.set('date', toLocalDateInput(new Date(a.startTime)));
                           }
                           setLocation(`/soap-notes?${params.toString()}`);
                         }}

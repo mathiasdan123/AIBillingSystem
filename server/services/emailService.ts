@@ -7,6 +7,7 @@
 import nodemailer from 'nodemailer';
 import logger from './logger';
 import { shouldSendNotification, type NotificationType } from './notificationPreferencesService';
+import { createEmailTransporter, isEmailTransportConfigured } from './emailTransportFactory';
 
 // ==================== CONFIGURATION ====================
 
@@ -33,13 +34,13 @@ let transporter: ReturnType<typeof nodemailer.createTransport> | null = null;
 
 function getTransporter(): ReturnType<typeof nodemailer.createTransport> {
   if (!transporter) {
-    transporter = nodemailer.createTransport(smtpConfig);
+    transporter = createEmailTransporter(smtpConfig);
   }
   return transporter;
 }
 
 export function isSmtpConfigured(): boolean {
-  return !!(process.env.SMTP_USER && process.env.SMTP_PASS);
+  return isEmailTransportConfigured();
 }
 
 // ==================== RATE LIMITER ====================

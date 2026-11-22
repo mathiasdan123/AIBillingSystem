@@ -74,6 +74,7 @@ import cors from "cors";
 import rateLimit, { type Store } from "express-rate-limit";
 import { registerRoutes } from "./routes";
 import { serveStatic, log } from "./static";
+import { generalRateLimitKey, generalRateLimitMax } from "./middleware/generalRateLimitKey";
 import { requestTimeout } from "./middleware/requestTimeout";
 import { accessLogLine, safeResponseCode } from "./utils/accessLog";
 import { requestSanitizer } from "./middleware/sanitize";
@@ -84,6 +85,7 @@ import { startScheduler, stopScheduler } from "./scheduler";
 import { initRedisClient, shutdownRedis } from "./services/redisClient";
 import { RedisStore } from "rate-limit-redis";
 import { bruteForceProtection } from "./middleware/rate-limiter";
+import { assertProductionAiProvider } from './services/aiProvider';
 import { swaggerSpec } from "./swagger";
 
 // =============================================================================
@@ -146,11 +148,14 @@ if (isProduction && !isDemoMode) {
     process.exit(1);
   }
 
-  // Warn if no AI provider is configured — AI features will be disabled.
-  // Either ANTHROPIC_API_KEY (direct API) or AI_PROVIDER=bedrock (Claude on
-  // AWS Bedrock via the task role, HIPAA-eligible under the AWS BAA) works.
-  if (!process.env.ANTHROPIC_API_KEY && (process.env.AI_PROVIDER || '').toLowerCase() !== 'bedrock') {
-    console.warn('⚠️  No AI provider configured (ANTHROPIC_API_KEY or AI_PROVIDER=bedrock): AI billing assistant, claim review, and appeal generation will be unavailable.');
+  // Production requires AI_PROVIDER=bedrock; anything else (unset included)
+  // stops the task here. The demo deployment is exempt with the rest of this
+  // block (isDemoMode above).
+  try {
+    assertProductionAiProvider();
+  } catch (error) {
+    console.error(`FATAL: ${error instanceof Error ? error.message : String(error)}`);
+    process.exit(1);
   }
 
   // Warn if Redis is not configured — rate limiting will be per-instance only
@@ -304,6 +309,11 @@ app.use((req, res, next) => {
 // Security: Rate limiting (configurable via environment variables)
 const RATE_LIMIT_WINDOW_MS = parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000'); // 15 minutes default
 const RATE_LIMIT_MAX_GENERAL = parseInt(process.env.RATE_LIMIT_MAX_GENERAL || '1000');
+// Per-browser-session cap for the general limiter (see middleware/
+// generalRateLimitKey.ts). 4,000 per 15 minutes is ~270 requests a minute:
+// far above anything a person produces by hand (a dashboard load is ~15
+// API calls), while the per-IP cap above still bounds anonymous traffic.
+const RATE_LIMIT_MAX_GENERAL_SESSION = parseInt(process.env.RATE_LIMIT_MAX_GENERAL_SESSION || '4000');
 const RATE_LIMIT_MAX_AUTH = parseInt(process.env.RATE_LIMIT_MAX_AUTH || '20');
 const RATE_LIMIT_MAX_API = parseInt(process.env.RATE_LIMIT_MAX_API || '100');
 const API_RATE_LIMIT_WINDOW_MS = parseInt(process.env.API_RATE_LIMIT_WINDOW_MS || '60000'); // 1 minute default
@@ -344,7 +354,13 @@ if (redisClient) {
 // an in-memory counter independent of these limiters.
 const generalLimiter = rateLimit({
   windowMs: RATE_LIMIT_WINDOW_MS,
-  max: RATE_LIMIT_MAX_GENERAL,
+  // Keyed per browser session when the request carries a valid signed
+  // session cookie, per IP otherwise; the cap follows the key. Before
+  // 2026-11-06 this was one 1,000-request bucket per IP for every request
+  // on the site, which an office of five behind one router shared, and
+  // which a reviewer walking the pages exhausted in minutes.
+  keyGenerator: generalRateLimitKey,
+  limit: (req) => generalRateLimitMax(req, { perIp: RATE_LIMIT_MAX_GENERAL, perSession: RATE_LIMIT_MAX_GENERAL_SESSION }),
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -380,13 +396,19 @@ app.use('/api/patient-portal/request-login', bruteForceProtection, authLimiter);
 app.use('/api/oon-predict', apiLimiter);
 app.use('/api/ai', apiLimiter);
 app.use('/api/public/book', apiLimiter);
-app.use(generalLimiter);
+// API only: page loads and static assets no longer count against the budget.
+app.use('/api', generalLimiter);
 
 // Stripe webhook needs raw body for signature verification - must be before JSON parser
 app.use('/api/webhooks/stripe', express.raw({ type: 'application/json' }));
 
 // Plaid webhook needs raw body for signature verification - must be before JSON parser
 app.use('/api/plaid/webhook', express.raw({ type: 'application/json' }));
+
+// SNS delivers SES bounce/complaint notifications as text/plain (not
+// application/json, despite the body being JSON) - raw body needed here
+// too so the route can JSON.parse it itself after signature verification.
+app.use('/api/webhooks/ses-notifications', express.raw({ type: ['text/plain', 'application/json'] }));
 
 // Body parsing with size limits (for all other routes)
 app.use(express.json({ limit: '10mb' }));
