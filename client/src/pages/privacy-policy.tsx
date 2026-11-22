@@ -107,19 +107,24 @@ export default function PrivacyPolicy() {
           <section>
             <h2 className="text-xl font-semibold text-slate-900 mb-3">6. Third-Party Services</h2>
             <p className="text-slate-700 leading-relaxed mb-3">
-              We use the following third-party services to operate the platform. Each service that handles PHI does
-              so under a Business Associate Agreement unless noted otherwise below:
+              We use the following third-party services to operate the platform. For each service we describe what it
+              is used for and what information it may receive:
             </p>
             <ul className="list-disc list-inside text-slate-700 space-y-2">
               <li><strong>Amazon Web Services (AWS):</strong> Cloud infrastructure, hosting, and database services (BAA in place)</li>
               <li><strong>Stedi:</strong> Electronic clearinghouse for insurance eligibility verification, claim submission, and claim status inquiries (BAA in place)</li>
-              <li><strong>Stripe:</strong> Payment processing for subscription billing and patient invoicing (PCI DSS compliant)</li>
-              <li><strong>Anthropic (Claude AI), via Amazon Bedrock:</strong> AI-powered billing code suggestions, clinical documentation assistance, and appeal letter generation. Processed through Amazon Bedrock and covered under our AWS Business Associate Agreement. AI outputs always require provider review.</li>
-              <li><strong>OpenAI:</strong> Used for voice-to-text transcription of dictated clinical notes and an optional AI-assisted progress note summary feature. We have not executed a separate Business Associate Agreement with OpenAI for this use. We are migrating this functionality to Amazon Transcribe, covered under our existing AWS Business Associate Agreement.</li>
-              <li><strong>ElevenLabs:</strong> Used for an optional text-to-speech feature that reads clinical notes and appeal letters aloud. We have not executed a separate Business Associate Agreement with ElevenLabs for this use. We are migrating this functionality to Amazon Polly, covered under our existing AWS Business Associate Agreement.</li>
-              <li><strong>Twilio:</strong> SMS appointment reminders, which may include a patient's first name and appointment time. We have not executed a Business Associate Agreement with Twilio for this use.</li>
-              <li><strong>Amazon SES:</strong> Transactional email for appointment reminders, billing notifications, and account-related messages (such as password resets). Migration to this service is in progress; once live, it will be covered under our AWS Business Associate Agreement.</li>
+              <li><strong>Stripe:</strong> Payment processing for subscription billing and patient invoicing (PCI DSS compliant). Stripe may receive the name and contact details needed to issue an invoice or process a payment.</li>
+              <li><strong>Anthropic (Claude AI), via Amazon Bedrock:</strong> AI-powered billing code suggestions, clinical documentation assistance, and appeal letter generation. These requests are processed through Amazon Bedrock within our AWS environment rather than sent to Anthropic directly, and are covered by our AWS Business Associate Agreement. AI outputs always require provider review.</li>
+              <li><strong>Plaid:</strong> If a practice chooses to connect a bank account for deposit reconciliation, Plaid provides read-only access to that account's transaction data. The integration is designed so that no patient information is sent to Plaid.</li>
+              <li><strong>Sentry:</strong> Application error monitoring. Error reports are configured to exclude request bodies, cookies, query strings, and authentication headers, and we do not send default personal identifiers such as IP addresses. Reports may include technical details such as error messages, stack traces, and redacted request paths.</li>
+              <li><strong>Email delivery provider:</strong> Transactional email, including appointment reminders, billing notifications, and account messages such as password resets, is sent through a third-party email delivery service. These messages may include a recipient's name and appointment or billing details.</li>
             </ul>
+            <p className="text-slate-700 leading-relaxed mt-3">
+              The platform also contains optional features, such as text-message reminders, voice transcription, and
+              text-to-speech, that rely on additional third-party providers. These features are not enabled in our
+              production environment. If we enable them, we will update this policy to describe the providers involved
+              before they process any information.
+            </p>
           </section>
 
           <section>
