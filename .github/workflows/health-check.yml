@@ -23,6 +23,19 @@ jobs:
   health-check:
     runs-on: ubuntu-latest
     steps:
+      - name: Test Landing Page
+        # First and unconditional: the public landing page is the one
+        # surface every visitor hits, so it is checked before anything else
+        # and regardless of how the demo-specific steps below turn out.
+        run: |
+          status=$(curl -s --max-time 30 -o /dev/null -w "%{http_code}" "$PROD_URL")
+          if [ "$status" = "200" ]; then
+            echo "✅ Landing page loads"
+          else
+            echo "❌ Landing page returned HTTP $status"
+            exit 1
+          fi
+
       - name: Check Production Health
         id: health
         run: |
@@ -40,23 +53,50 @@ jobs:
           fi
 
       - name: Test Demo Login (save session cookie)
+        id: demo_login
         run: |
           # -c writes Set-Cookie headers to cookies.txt so the patients
           # and Blanche steps below can reuse the demo session.
-          response=$(curl -s -w "\n%{http_code}" -c cookies.txt -X POST "$PROD_URL/api/demo-login" \
+          #
+          # The demo login is off by default and answers 404 while it is
+          # off. That is the configured state, not an outage, so a 404 marks
+          # the demo-specific steps as skipped instead of failing the run.
+          # Every other outcome (5xx, timeout, 200 without a user) is still a
+          # failure.
+          curl_rc=0
+          response=$(curl -s --max-time 30 -w "\n%{http_code}" -c cookies.txt -X POST "$PROD_URL/api/demo-login" \
             -H "Content-Type: application/json" \
-            -d '{"email":"demo@therapybill.com","password":"demo1234"}')
+            -d '{"email":"demo@therapybill.com","password":"demo1234"}') || curl_rc=$?
+          if [ "$curl_rc" -ne 0 ]; then
+            echo "❌ Demo login request failed (curl exit $curl_rc; 28 = timeout)"
+            exit 1
+          fi
           status=$(echo "$response" | tail -1)
+          body=$(echo "$response" | sed '$d')
 
-          if [ "$status" = "200" ]; then
-            echo "✅ Demo login works"
-          else
+          if [ "$status" = "404" ]; then
+            echo "⏭️ Demo login is intentionally gated (HTTP 404). Skipping demo-login, demo-patients and Blanche checks."
+            echo "gated=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "gated=false" >> "$GITHUB_OUTPUT"
+
+          if [ "$status" != "200" ]; then
             echo "❌ Demo login returned HTTP $status"
-            echo "$response" | head -1
+            echo "$body" | head -c 500
             exit 1
           fi
 
+          has_user=$(echo "$body" | python3 -c "import sys, json; d=json.load(sys.stdin); u=d.get('user') or {}; print('yes' if isinstance(u.get('id'), str) and u['id'] else 'no')" 2>/dev/null || echo "no")
+          if [ "$has_user" != "yes" ]; then
+            echo "❌ Demo login returned HTTP 200 but no user in the body"
+            echo "$body" | head -c 500
+            exit 1
+          fi
+          echo "✅ Demo login works"
+
       - name: Test Patients API returns demo data (>= 6 patients)
+        if: steps.demo_login.outputs.gated != 'true'
         run: |
           # Demo readiness signal — if the demo account shows 0 patients,
           # a live customer demo will look broken. The seed expects 6+.
@@ -73,6 +113,7 @@ jobs:
           fi
 
       - name: Test Blanche assistant responds
+        if: steps.demo_login.outputs.gated != 'true'
         run: |
           # Smallest possible turn — just "hello", no tool use. Confirms the
           # Anthropic API key, rate-limit middleware, and assistant route
@@ -88,16 +129,6 @@ jobs:
             echo "❌ Blanche did not respond"
             echo "First 500 chars of response:"
             echo "$body" | head -c 500
-            exit 1
-          fi
-
-      - name: Test Landing Page
-        run: |
-          status=$(curl -s -o /dev/null -w "%{http_code}" "$PROD_URL")
-          if [ "$status" = "200" ]; then
-            echo "✅ Landing page loads"
-          else
-            echo "❌ Landing page returned HTTP $status"
             exit 1
           fi
 
