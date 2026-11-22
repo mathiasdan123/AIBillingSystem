@@ -1439,9 +1439,9 @@ export default function SoapNotes() {
 
   return (
     <div className="min-h-screen bg-slate-50">
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6 max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6 flex items-center justify-between">
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
             <h1 className="text-2xl font-bold text-foreground flex items-center gap-2">
               <FileText className="w-6 h-6 text-blue-600" />
