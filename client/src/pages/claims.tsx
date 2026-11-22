@@ -1407,6 +1407,8 @@ export default function Claims() {
   // Status counts + sums for the stat tiles, across ALL claims (not just this page).
   const { data: claimsSummary } = useQuery<{
     total: number; draft: number; submitted: number; paid: number; denied: number; held: number;
+    // The shared rate cohort (sent at least once, demo rows excluded).
+    transmitted?: number; transmittedPaid?: number; transmittedDenied?: number;
     totalAmount: number; paidAmount: number; pendingAmount: number;
   }>({
     queryKey: [`/api/claims/summary?practiceId=${practiceId}`],
@@ -2385,6 +2387,8 @@ export default function Claims() {
     submitted: claimsSummary?.submitted || 0,
     paid: claimsSummary?.paid || 0,
     denied: claimsSummary?.denied || 0,
+    transmitted: claimsSummary?.transmitted || 0,
+    transmittedPaid: claimsSummary?.transmittedPaid || 0,
     totalAmount: claimsSummary?.totalAmount || 0,
     paidAmount: claimsSummary?.paidAmount || 0,
     pendingAmount: claimsSummary?.pendingAmount || 0,
@@ -3250,6 +3254,7 @@ export default function Claims() {
               <div>
                 <p className="text-xs md:text-sm text-muted-foreground">Paid Amount</p>
                 <p className="text-lg md:text-2xl font-bold text-green-600">${stats.paidAmount.toFixed(2)}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">All time</p>
               </div>
               <div className="p-2 bg-green-100 rounded-lg">
                 <DollarSign className="w-5 h-5 text-green-600" />
@@ -3262,10 +3267,11 @@ export default function Claims() {
           <CardContent className="p-3 md:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs md:text-sm text-muted-foreground">Success Rate</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Paid Rate</p>
                 <p className="text-xl md:text-2xl font-bold text-blue-600">
-                  {stats.total > 0 ? ((stats.paid / stats.total) * 100).toFixed(0) : 0}%
+                  {stats.transmitted > 0 ? ((stats.transmittedPaid / stats.transmitted) * 100).toFixed(0) : 0}%
                 </p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">currently paid, of sent claims</p>
               </div>
               <div className="p-2 bg-blue-100 rounded-lg">
                 <TrendingUp className="w-5 h-5 text-blue-600" />

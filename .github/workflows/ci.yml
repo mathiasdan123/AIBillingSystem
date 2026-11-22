@@ -93,6 +93,15 @@ jobs:
           TIMEZONE: America/New_York
         run: npm run test:demo-provision
 
+      # The claim population behind the paid and denial rates (dashboard, Claims
+      # page summary, Daily Insights) against the same Postgres service, in its
+      # own schema. Self-skips without the variable, so `npm test` needs no
+      # database.
+      - name: Claim rate cohort against real Postgres
+        env:
+          CLAIM_COHORT_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/demo_provision
+        run: npm run test:claim-cohort
+
       # End-to-end claims flow against Stedi TEST MODE (real network, fake
       # payer). Submits a claim to the Stedi Test Payer and asserts acceptance.
       # Runs for real only when the STEDI_TEST_API_KEY secret is configured —

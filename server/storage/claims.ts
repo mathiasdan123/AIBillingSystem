@@ -45,6 +45,7 @@ import {
 import { db } from "../db";
 import { eq, desc, and, or, gte, lte, isNull, inArray, sql, count, sum, ilike, type SQL } from "drizzle-orm";
 import { stripImmutable } from "../utils/sanitizeUpdate";
+import { claimCohortAggregates } from "./claimCohort";
 import { cache, CacheKeys } from "../services/cacheService";
 
 // ==================== CLAIMS ====================
@@ -150,6 +151,10 @@ export async function getClaimsStatusSummary(practiceId: number): Promise<{
   paid: number;
   denied: number;
   held: number;
+  /** Transmitted cohort (storage/claimCohort.ts), excluding demo-tagged rows: the base for the paid rate. */
+  transmitted: number;
+  transmittedPaid: number;
+  transmittedDenied: number;
   totalAmount: number;
   paidAmount: number;
   pendingAmount: number;
@@ -162,6 +167,8 @@ export async function getClaimsStatusSummary(practiceId: number): Promise<{
       paid: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'paid')::int`,
       denied: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'denied')::int`,
       held: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'held')::int`,
+      // Same cohort and demo exclusion as the dashboard rate (claimCohort.ts).
+      ...claimCohortAggregates(),
       totalAmount: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric), 0)`,
       paidAmount: sql<string>`COALESCE(SUM(${claims.paidAmount}::numeric) FILTER (WHERE ${claims.status} = 'paid'), 0)`,
       pendingAmount: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric) FILTER (WHERE ${claims.status} = 'submitted'), 0)`,
@@ -175,6 +182,9 @@ export async function getClaimsStatusSummary(practiceId: number): Promise<{
     paid: row?.paid ?? 0,
     denied: row?.denied ?? 0,
     held: row?.held ?? 0,
+    transmitted: row?.transmitted ?? 0,
+    transmittedPaid: row?.transmittedPaid ?? 0,
+    transmittedDenied: row?.transmittedDenied ?? 0,
     totalAmount: parseFloat(row?.totalAmount ?? '0'),
     paidAmount: parseFloat(row?.paidAmount ?? '0'),
     pendingAmount: parseFloat(row?.pendingAmount ?? '0'),
