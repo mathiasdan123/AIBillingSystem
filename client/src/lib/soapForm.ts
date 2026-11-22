@@ -3,9 +3,6 @@
  * can be tested without rendering it.
  */
 
-/** Billing units are 15 minutes each. */
-export const MINUTES_PER_UNIT = 15;
-
 /**
  * The required inputs still missing before a note can be generated, in the
  * order they appear on the form. Empty when the form is complete.
@@ -22,20 +19,17 @@ export function getMissingRequiredFields(input: {
   return missing;
 }
 
-/** "1 unit · 15 min", "3 units · 45 min": minutes always follow from the unit count. */
-export function formatUnitsWithMinutes(units: number): string {
-  return `${units} ${units === 1 ? 'unit' : 'units'} · ${units * MINUTES_PER_UNIT} min`;
+/** "1 unit", "3 units". Units are shown as recorded; no minutes are derived from them. */
+export function formatUnits(units: number): string {
+  return `${units} ${units === 1 ? 'unit' : 'units'}`;
 }
 
 /**
- * The line under the suggested codes. The billed minutes are derived from the
- * same unit count shown on each code, so the two cannot disagree, and a
- * difference from the session length is stated rather than hidden.
+ * The line under the suggested codes: the billed units and the session length
+ * as two separate facts. The units come from the billing result and the
+ * session length from the form; neither is converted into the other, so a
+ * difference between them is never presented as a calculation.
  */
 export function describeBilledUnits(totalUnits: number, sessionMinutes: number): string {
-  const billed = totalUnits * MINUTES_PER_UNIT;
-  const base = `${totalUnits} billed ${totalUnits === 1 ? 'unit' : 'units'} (${MINUTES_PER_UNIT} min each) = ${billed} min`;
-  return billed === sessionMinutes
-    ? `${base} · ${sessionMinutes} min session`
-    : `${base} of a ${sessionMinutes} min session`;
+  return `${totalUnits} billed ${totalUnits === 1 ? 'unit' : 'units'} · ${sessionMinutes}-minute session`;
 }

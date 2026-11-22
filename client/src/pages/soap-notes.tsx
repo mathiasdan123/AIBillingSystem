@@ -36,7 +36,7 @@ import { derivePracticeUnitRate, describeUnitRate } from "@/lib/practiceRate";
 import { DraftSavedIndicator } from "@/components/DraftSavedIndicator";
 import { type SoapNote, type Patient, type CptCode, type TherapyBank, type ExerciseBank } from "@shared/schema";
 import { type ActivityCptPairing, cptNameFor, reconcileCptCodesWithPairings } from "@shared/activityCpt";
-import { describeBilledUnits, formatUnitsWithMinutes, getMissingRequiredFields } from "@/lib/soapForm";
+import { describeBilledUnits, formatUnits, getMissingRequiredFields } from "@/lib/soapForm";
 import ActivityCptPairingEditor from "@/components/ActivityCptPairingEditor";
 import GeneratedSoapSection, { type SoapSectionKey } from "@/components/GeneratedSoapSection";
 
@@ -2731,7 +2731,7 @@ export default function SoapNotes() {
                         <div className="flex items-center justify-between mb-1">
                           <div className="flex items-center gap-2">
                             <Badge className={`font-mono ${index === 0 ? 'bg-green-600' : ''}`}>{code.code}</Badge>
-                            <span className="text-xs text-muted-foreground">{formatUnitsWithMinutes(code.units)}</span>
+                            <span className="text-xs text-muted-foreground">{formatUnits(code.units)}</span>
                           </div>
                           {isAdmin && (
                             <span className={`text-sm font-semibold ${index === 0 ? 'text-green-700' : 'text-green-600'}`}>
