@@ -117,13 +117,15 @@ async function getClaimCountsByDateRange(
   practiceId: number,
   start: Date,
   end: Date,
-): Promise<{ total: number; paid: number; denied: number; submitted: number }> {
+): Promise<{ total: number; paid: number; denied: number; submitted: number; submittedTotal: number }> {
   const rows = await db
     .select({
       total: count(),
       paid: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'paid')`,
       denied: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'denied')`,
       submitted: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'submitted')`,
+      // Claims that have actually been submitted (any outcome); the base for rates.
+      submittedTotal: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} IN ('submitted','paid','denied','appeal'))`,
     })
     .from(claims)
     .where(
@@ -139,6 +141,7 @@ async function getClaimCountsByDateRange(
     paid: Number(rows[0]?.paid) || 0,
     denied: Number(rows[0]?.denied) || 0,
     submitted: Number(rows[0]?.submitted) || 0,
+    submittedTotal: Number(rows[0]?.submittedTotal) || 0,
   };
 }
 
@@ -217,9 +220,11 @@ export async function generateDailyReport(
 
   // Trailing 7-day denial rate
   const trailing7d = await getClaimCountsByDateRange(db, practiceId, sevenDaysAgo, dayEnd);
+  // Measured against submitted claims, like the dashboard denial rate. Drafts
+  // created this week have not been submitted and cannot be denied yet.
   const denialRateTrailing7Day =
-    trailing7d.total > 0
-      ? Math.round((trailing7d.denied / trailing7d.total) * 10000) / 100
+    trailing7d.submittedTotal > 0
+      ? Math.round((trailing7d.denied / trailing7d.submittedTotal) * 10000) / 100
       : 0;
 
   // Expiring authorizations (next 7 days)
@@ -299,7 +304,7 @@ export async function generateDailyReport(
     actionItems.push({
       priority: 'high',
       category: 'Denial Rate',
-      description: `Trailing 7-day denial rate is ${denialRateTrailing7Day}%, which exceeds the 10% threshold. Review claim submission accuracy.`,
+      description: `Trailing 7-day denial rate is ${denialRateTrailing7Day}% (${trailing7d.denied} of ${trailing7d.submittedTotal} submitted claims), which exceeds the 10% threshold. Review claim submission accuracy.`,
     });
   }
 

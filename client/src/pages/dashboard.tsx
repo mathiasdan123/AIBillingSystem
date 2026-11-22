@@ -302,7 +302,7 @@ export default function Dashboard() {
                 <p className="text-lg md:text-xl font-bold text-green-700 dark:text-green-400">
                   ${(dailyInsights.revenueCollectedToday || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                 </p>
-                <p className="text-[10px] md:text-xs text-muted-foreground">Revenue</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">Revenue Today</p>
               </div>
               <div className="text-center p-2.5 bg-purple-50 dark:bg-purple-950 rounded-lg border border-purple-100 dark:border-purple-900">
                 <p className="text-lg md:text-xl font-bold text-purple-700 dark:text-purple-400">{dailyInsights.patientVolume?.completed || 0}</p>

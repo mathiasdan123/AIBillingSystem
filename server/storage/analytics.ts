@@ -9,6 +9,7 @@ import {
 } from "@shared/schema";
 import { db } from "../db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, or } from "drizzle-orm";
+import { ratePercent } from "../utils/claimRates";
 
 // ==================== ANALYTICS ====================
 // Phase 5: every claims/patients/appointments aggregate excludes demo rows
@@ -21,11 +22,15 @@ const NOT_DEMO_APPOINTMENT = eq(appointments.isDemo, false);
 
 export async function getDashboardStats(practiceId: number): Promise<{
   totalClaims: number;
+  /** Claims that have been submitted (submitted, paid, denied or in appeal). */
+  submittedClaims: number;
+  /** Percent of submitted claims that were paid. */
   successRate: number;
   totalRevenue: number;
   avgDaysToPayment: number;
   monthlyClaimsCount: number;
   monthlyRevenue: number;
+  /** Percent of submitted claims that were denied. */
   denialRate: number;
   pendingClaims: number;
   claimsAtComplianceRisk: number;
@@ -42,6 +47,7 @@ export async function getDashboardStats(practiceId: number): Promise<{
   const [row] = await db
     .select({
       totalClaims: sql<number>`COUNT(*)::int`,
+      submittedClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} IN ('submitted','paid','denied','appeal'))::int`,
       paidClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'paid')::int`,
       deniedClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'denied')::int`,
       pendingClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'submitted')::int`,
@@ -56,18 +62,20 @@ export async function getDashboardStats(practiceId: number): Promise<{
     .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM));
 
   const totalClaims = Number(row?.totalClaims) || 0;
+  const submittedClaims = Number(row?.submittedClaims) || 0;
   const paidClaims = Number(row?.paidClaims) || 0;
   const deniedClaims = Number(row?.deniedClaims) || 0;
   const pendingClaims = Number(row?.pendingClaims) || 0;
 
   return {
     totalClaims,
-    successRate: totalClaims > 0 ? (paidClaims / totalClaims) * 100 : 0,
+    submittedClaims,
+    successRate: ratePercent(paidClaims, submittedClaims),
     totalRevenue: Number(row?.totalRevenue) || 0,
     avgDaysToPayment: 14.2,
     monthlyClaimsCount: Number(row?.monthlyClaimsCount) || 0,
     monthlyRevenue: Number(row?.monthlyRevenue) || 0,
-    denialRate: totalClaims > 0 ? (deniedClaims / totalClaims) * 100 : 0,
+    denialRate: ratePercent(deniedClaims, submittedClaims),
     pendingClaims,
     claimsAtComplianceRisk: Number(row?.claimsAtComplianceRisk) || 0,
   };

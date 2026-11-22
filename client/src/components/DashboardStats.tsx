@@ -1,15 +1,19 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, CheckCircle, DollarSign, Clock, TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, ShieldAlert } from "lucide-react";
+import { FileText, DollarSign, Clock, TrendingUp, ShieldCheck, ShieldAlert } from "lucide-react";
 import { Link } from "wouter";
 
 interface DashboardStatsProps {
   stats: {
     totalClaims: number;
+    /** Claims that have been submitted (any outcome). */
+    submittedClaims?: number;
+    /** Percent of submitted claims that were paid. */
     successRate: number;
     totalRevenue: number;
     avgDaysToPayment: number;
     monthlyClaimsCount: number;
     monthlyRevenue: number;
+    /** Percent of submitted claims that were denied. */
     denialRate: number;
     pendingClaims: number;
     claimsAtComplianceRisk?: number;
@@ -26,6 +30,10 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
     }).format(amount);
   };
 
+  // Label the revenue figure with the period it covers so it can be compared
+  // with the Accounting and Claims pages, which use different periods.
+  const monthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
   const kpis = [
     {
       title: 'Monthly Revenue',
@@ -33,7 +41,7 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
       icon: DollarSign,
       iconBg: 'bg-emerald-100 dark:bg-emerald-950',
       iconColor: 'text-emerald-600 dark:text-emerald-400',
-      description: 'Total payments this month',
+      description: `Claim payments received, ${monthLabel}`,
     },
     {
       title: 'Claims This Month',
@@ -44,20 +52,15 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
       description: `${stats?.pendingClaims ?? 0} pending`,
     },
     {
-      title: 'Success Rate',
+      // Both rates are measured against submitted claims, so paid, denied and
+      // still-pending claims add up to the same base. The icon is neutral: a
+      // paid rate is not an alarm on its own while claims are still pending.
+      title: 'Paid Rate',
       value: `${(stats?.successRate ?? 0).toFixed(1)}%`,
-      icon: (stats?.successRate ?? 0) >= 90 ? CheckCircle : (stats?.successRate ?? 0) >= 75 ? TrendingUp : AlertTriangle,
-      iconBg: (stats?.successRate ?? 0) >= 90
-        ? 'bg-emerald-100 dark:bg-emerald-950'
-        : (stats?.successRate ?? 0) >= 75
-          ? 'bg-amber-100 dark:bg-amber-950'
-          : 'bg-red-100 dark:bg-red-950',
-      iconColor: (stats?.successRate ?? 0) >= 90
-        ? 'text-emerald-600 dark:text-emerald-400'
-        : (stats?.successRate ?? 0) >= 75
-          ? 'text-amber-600 dark:text-amber-400'
-          : 'text-red-600 dark:text-red-400',
-      description: `${(stats?.denialRate ?? 0).toFixed(1)}% denial rate`,
+      icon: TrendingUp,
+      iconBg: 'bg-blue-100 dark:bg-blue-950',
+      iconColor: 'text-blue-600 dark:text-blue-400',
+      description: `of submitted claims · ${(stats?.denialRate ?? 0).toFixed(1)}% denied`,
     },
     {
       title: 'Avg. Days to Payment',

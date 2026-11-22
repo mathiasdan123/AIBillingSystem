@@ -150,6 +150,7 @@ export async function getClaimsStatusSummary(practiceId: number): Promise<{
   paid: number;
   denied: number;
   held: number;
+  appeal: number;
   totalAmount: number;
   paidAmount: number;
   pendingAmount: number;
@@ -162,6 +163,7 @@ export async function getClaimsStatusSummary(practiceId: number): Promise<{
       paid: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'paid')::int`,
       denied: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'denied')::int`,
       held: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'held')::int`,
+      appeal: sql<number>`count(*) FILTER (WHERE ${claims.status} = 'appeal')::int`,
       totalAmount: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric), 0)`,
       paidAmount: sql<string>`COALESCE(SUM(${claims.paidAmount}::numeric) FILTER (WHERE ${claims.status} = 'paid'), 0)`,
       pendingAmount: sql<string>`COALESCE(SUM(${claims.totalAmount}::numeric) FILTER (WHERE ${claims.status} = 'submitted'), 0)`,
@@ -175,6 +177,7 @@ export async function getClaimsStatusSummary(practiceId: number): Promise<{
     paid: row?.paid ?? 0,
     denied: row?.denied ?? 0,
     held: row?.held ?? 0,
+    appeal: row?.appeal ?? 0,
     totalAmount: parseFloat(row?.totalAmount ?? '0'),
     paidAmount: parseFloat(row?.paidAmount ?? '0'),
     pendingAmount: parseFloat(row?.pendingAmount ?? '0'),
