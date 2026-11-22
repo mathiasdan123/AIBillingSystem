@@ -18,6 +18,7 @@ import { useLocation } from "wouter";
 import { ChevronLeft, ChevronRight, Plus, Clock, User, Mail, XCircle, CalendarX, ClipboardList, Repeat, Building2, Check, ChevronsUpDown, ShieldCheck, Loader2, LogIn, LogOut, CalendarCheck, DollarSign, FileText } from "lucide-react";
 import type { Appointment } from "@shared/schema";
 import AppointmentRequestQueue from "@/components/AppointmentRequestQueue";
+import { blockHeightPx, weekNameLines } from "@/lib/calendarBlock";
 import CopayModal from "@/components/CopayModal";
 
 interface AvailabilitySlot {
@@ -594,8 +595,7 @@ export default function CalendarPage() {
     const eh = end.getHours();
     const em = end.getMinutes();
     const top = Math.max(0, ((sh - 8) * 60 + sm) * (64 / 60));
-    const height = ((eh - sh) * 60 + (em - sm)) * (64 / 60);
-    return { top: top + "px", height: Math.max(height, 24) + "px" };
+    return { top: top + "px", height: blockHeightPx((eh - sh) * 60 + (em - sm)) + "px" };
   };
 
   const getStatusColor = (s: string) =>
@@ -1307,7 +1307,7 @@ export default function CalendarPage() {
                       return (
                       <div
                         key={apt.id}
-                        className={"absolute left-1 right-1 rounded-lg " + (view === "week" ? "px-1.5 py-1" : "p-2") + " overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-300 transition " + getCalendarBlockStyle(apt)}
+                        className={"absolute rounded-lg " + (view === "week" ? "left-px right-px px-0.5 py-0.5 !border-l-[3px]" : "left-1 right-1 p-2") + " overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-300 transition " + getCalendarBlockStyle(apt)}
                         style={getAppointmentStyle(apt)}
                         onClick={() => {
                           // Reviewer fix #4: open the unified actions dialog from
@@ -1336,24 +1336,33 @@ export default function CalendarPage() {
                             (apt.status === "cancelled" ? ` (Cancelled${(apt as any).cancelledBy ? ` by ${(apt as any).cancelledBy === "patient" ? "Patient" : "Staff"}` : ""})` : "");
                           const badgeClass = "text-[9px] px-1.5 py-0.5 rounded-full font-semibold leading-tight flex-shrink-0 " + getStatusColor(statusLabel);
                           if (view === "week") {
-                            // Blocks under ~45 minutes are too short for a wrapped
-                            // name plus the time row; they show the name only.
-                            const tall = (new Date(apt.endTime).getTime() - new Date(apt.startTime).getTime()) >= 45 * 60000;
-                            // Week columns are narrow: the name gets the full width
-                            // (wrapping to two lines) and the status badge sits next
-                            // to the time instead of competing with the name.
+                            // Week columns are narrow, so the layout is budgeted
+                            // against the block's height (see lib/calendarBlock):
+                            // the name wraps to as many lines as fit, and the
+                            // time and status always keep their own row below it,
+                            // even in a 30 minute block.
+                            const minutes = (new Date(apt.endTime).getTime() - new Date(apt.startTime).getTime()) / 60000;
+                            const lines = weekNameLines(blockHeightPx(minutes));
+                            const clamp = { 1: "line-clamp-1", 2: "line-clamp-2", 3: "line-clamp-3" }[lines];
+                            const [clock, meridiem] = formatTime(apt.startTime).split(" ");
                             return (
                               <div title={`${name} — ${formatTime(apt.startTime)} — ${statusLabel}${details}`}>
-                                <div className={"text-xs font-medium leading-tight " + (tall ? "line-clamp-2 break-words" : "truncate")}>
-                                  {(apt as any).isRecurring && <Repeat className="w-3 h-3 inline mr-1 align-[-2px]" />}
+                                <div className={"text-[11px] leading-[13px] font-medium break-words " + clamp}>
+                                  {(apt as any).isRecurring && <Repeat className="w-3 h-3 inline mr-0.5 align-[-2px]" />}
                                   {name}
                                 </div>
-                                {tall && (
-                                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1 text-[10px] text-slate-600 min-w-0">
-                                    <span className="flex-shrink-0">{formatTime(apt.startTime)}</span>
-                                    <span className={badgeClass.replace("px-1.5", "px-1")}>{String(statusLabel).replace(/_/g, " ")}</span>
-                                  </div>
-                                )}
+                                <div className="mt-px flex items-center gap-0.5 text-[10px] leading-[12px] text-slate-600 whitespace-nowrap min-w-0">
+                                  <span className="flex-shrink-0">
+                                    {clock}
+                                    {meridiem && <span className="hidden xl:inline"> {meridiem}</span>}
+                                  </span>
+                                  <span
+                                    data-testid={`grid-cell-status-${apt.id}`}
+                                    className={"text-[9px] leading-[12px] px-0.5 rounded-full font-semibold min-w-0 truncate " + getStatusColor(statusLabel)}
+                                  >
+                                    {String(statusLabel).replace(/_/g, " ")}
+                                  </span>
+                                </div>
                               </div>
                             );
                           }
