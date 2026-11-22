@@ -302,7 +302,7 @@ export default function Dashboard() {
                 <p className="text-lg md:text-xl font-bold text-green-700 dark:text-green-400">
                   ${(dailyInsights.revenueCollectedToday || 0).toLocaleString(undefined, { maximumFractionDigits: 0 })}
                 </p>
-                <p className="text-[10px] md:text-xs text-muted-foreground">Revenue</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">Revenue Today</p>
               </div>
               <div className="text-center p-2.5 bg-purple-50 dark:bg-purple-950 rounded-lg border border-purple-100 dark:border-purple-900">
                 <p className="text-lg md:text-xl font-bold text-purple-700 dark:text-purple-400">{dailyInsights.patientVolume?.completed || 0}</p>
@@ -312,7 +312,12 @@ export default function Dashboard() {
                 <p className={`text-lg md:text-xl font-bold ${(dailyInsights.denialRateTrailing7Day || 0) > 10 ? 'text-red-600' : 'text-amber-700 dark:text-amber-400'}`}>
                   {dailyInsights.denialRateTrailing7Day || 0}%
                 </p>
-                <p className="text-[10px] md:text-xs text-muted-foreground">7-Day Denial Rate</p>
+                <p
+                  className="text-[10px] md:text-xs text-muted-foreground"
+                  title="Of claims created in the last 7 days that have been sent, the share currently denied"
+                >
+                  7-Day Denial Rate
+                </p>
               </div>
             </div>
 

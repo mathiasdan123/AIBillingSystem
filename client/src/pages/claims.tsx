@@ -1407,6 +1407,8 @@ export default function Claims() {
   // Status counts + sums for the stat tiles, across ALL claims (not just this page).
   const { data: claimsSummary } = useQuery<{
     total: number; draft: number; submitted: number; paid: number; denied: number; held: number;
+    // The shared rate cohort (sent at least once, demo rows excluded).
+    transmitted?: number; transmittedPaid?: number; transmittedDenied?: number;
     totalAmount: number; paidAmount: number; pendingAmount: number;
   }>({
     queryKey: [`/api/claims/summary?practiceId=${practiceId}`],
@@ -2385,6 +2387,8 @@ export default function Claims() {
     submitted: claimsSummary?.submitted || 0,
     paid: claimsSummary?.paid || 0,
     denied: claimsSummary?.denied || 0,
+    transmitted: claimsSummary?.transmitted || 0,
+    transmittedPaid: claimsSummary?.transmittedPaid || 0,
     totalAmount: claimsSummary?.totalAmount || 0,
     paidAmount: claimsSummary?.paidAmount || 0,
     pendingAmount: claimsSummary?.pendingAmount || 0,
@@ -2589,10 +2593,10 @@ export default function Claims() {
           <h1 className="text-xl md:text-2xl font-bold text-foreground">Claims Management</h1>
           <p className="text-sm md:text-base text-muted-foreground">Create, track, and manage insurance claims</p>
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-1 sm:pb-0 -mx-1 px-1">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
-            className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0"
+            className="min-h-[44px] whitespace-nowrap text-xs md:text-sm"
             disabled={exporting}
             data-testid="button-export-claims"
             onClick={async () => {
@@ -2638,18 +2642,18 @@ export default function Claims() {
             <span className="hidden sm:inline">{exporting ? "Exporting…" : "Export Claims"}</span>
             <span className="sm:hidden">{exporting ? "Exporting…" : "Export"}</span>
           </Button>
-          <Button variant="outline" onClick={() => setShowSessionsDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
+          <Button variant="outline" onClick={() => setShowSessionsDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm">
             <FileText className="w-4 h-4 mr-1 md:mr-2" />
             <span className="hidden sm:inline">Generate from Session</span>
             <span className="sm:hidden">From Session</span>
           </Button>
-          <Button variant="outline" onClick={() => setShowSuperbillDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
+          <Button variant="outline" onClick={() => setShowSuperbillDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm">
             <DollarSign className="w-4 h-4 mr-1 md:mr-2" />
             Superbill
           </Button>
           <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
             <DialogTrigger asChild>
-              <Button className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
+              <Button className="min-h-[44px] whitespace-nowrap text-xs md:text-sm">
                 <Plus className="w-4 h-4 mr-1 md:mr-2" />
                 New Claim
               </Button>
@@ -3250,6 +3254,7 @@ export default function Claims() {
               <div>
                 <p className="text-xs md:text-sm text-muted-foreground">Paid Amount</p>
                 <p className="text-lg md:text-2xl font-bold text-green-600">${stats.paidAmount.toFixed(2)}</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">All time</p>
               </div>
               <div className="p-2 bg-green-100 rounded-lg">
                 <DollarSign className="w-5 h-5 text-green-600" />
@@ -3262,10 +3267,11 @@ export default function Claims() {
           <CardContent className="p-3 md:p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs md:text-sm text-muted-foreground">Success Rate</p>
+                <p className="text-xs md:text-sm text-muted-foreground">Paid Rate</p>
                 <p className="text-xl md:text-2xl font-bold text-blue-600">
-                  {stats.total > 0 ? ((stats.paid / stats.total) * 100).toFixed(0) : 0}%
+                  {stats.transmitted > 0 ? ((stats.transmittedPaid / stats.transmitted) * 100).toFixed(0) : 0}%
                 </p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">currently paid, of sent claims</p>
               </div>
               <div className="p-2 bg-blue-100 rounded-lg">
                 <TrendingUp className="w-5 h-5 text-blue-600" />

@@ -131,15 +131,21 @@ export default function AccountingPage() {
 
   const isLoading = loadingTransactions || loadingStats;
 
+  // The period the revenue figures cover, shown on the card so it can be
+  // reconciled with the dashboard (this month) and Claims (all time).
+  const formatDay = (iso: string) =>
+    new Date(`${iso}T00:00:00`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  const periodLabel = `${formatDay(dateRange.start)} – ${formatDay(dateRange.end)}`;
+
   return (
-    <div className="p-6">
+    <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
       <div className="max-w-7xl mx-auto">
-        <div className="flex items-center justify-between mb-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
           <div>
             <h1 className="text-2xl font-bold text-slate-900">Accounting</h1>
             <p className="text-slate-600">Track revenue, payments, and financial reports</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={exportToCSV} disabled={isLoading}>
               <Download className="w-4 h-4 mr-2" />Export CSV
             </Button>
@@ -170,7 +176,7 @@ export default function AccountingPage() {
               </div>
               <div className="flex items-center mt-2 text-sm text-green-600" data-testid="text-total-revenue-detail">
                 <TrendingUp className="w-4 h-4 mr-1" />
-                {transactions.length} payments in period
+                {transactions.length} payments · {periodLabel}
                 {totalRefunded > 0 && <span className="ml-1 text-slate-500">· net of ${totalRefunded.toFixed(2)} refunded</span>}
               </div>
             </CardContent>

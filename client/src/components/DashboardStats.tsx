@@ -1,15 +1,20 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { FileText, CheckCircle, DollarSign, Clock, TrendingUp, TrendingDown, AlertTriangle, ShieldCheck, ShieldAlert } from "lucide-react";
+import { FileText, DollarSign, Clock, TrendingUp, ShieldCheck, ShieldAlert } from "lucide-react";
 import { Link } from "wouter";
 
 interface DashboardStatsProps {
   stats: {
     totalClaims: number;
+    /** Claims sent at least once, including rejected and reopened ones. */
+    transmittedClaims?: number;
+    /** Percent of those claims that are currently paid. A current-status snapshot. */
     successRate: number;
     totalRevenue: number;
-    avgDaysToPayment: number;
+    /** Null until it can be computed from real submitted and paid dates. */
+    avgDaysToPayment?: number | null;
     monthlyClaimsCount: number;
     monthlyRevenue: number;
+    /** Percent of those claims that are currently in denied status. */
     denialRate: number;
     pendingClaims: number;
     claimsAtComplianceRisk?: number;
@@ -26,6 +31,10 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
     }).format(amount);
   };
 
+  // Label the revenue figure with the period it covers so it can be compared
+  // with the Accounting and Claims pages, which use different periods.
+  const monthLabel = new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+
   const kpis = [
     {
       title: 'Monthly Revenue',
@@ -33,7 +42,7 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
       icon: DollarSign,
       iconBg: 'bg-emerald-100 dark:bg-emerald-950',
       iconColor: 'text-emerald-600 dark:text-emerald-400',
-      description: 'Total payments this month',
+      description: `Claim payments received, ${monthLabel}`,
     },
     {
       title: 'Claims This Month',
@@ -44,36 +53,26 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
       description: `${stats?.pendingClaims ?? 0} pending`,
     },
     {
-      title: 'Success Rate',
+      // Both rates are current-status snapshots of the same set of claims
+      // (those sent at least once, including rejected and reopened ones), so
+      // paid, denied and still-open claims add up to one base. The icon is
+      // neutral: a paid rate is not an alarm while claims are still pending.
+      title: 'Paid Rate',
       value: `${(stats?.successRate ?? 0).toFixed(1)}%`,
-      icon: (stats?.successRate ?? 0) >= 90 ? CheckCircle : (stats?.successRate ?? 0) >= 75 ? TrendingUp : AlertTriangle,
-      iconBg: (stats?.successRate ?? 0) >= 90
-        ? 'bg-emerald-100 dark:bg-emerald-950'
-        : (stats?.successRate ?? 0) >= 75
-          ? 'bg-amber-100 dark:bg-amber-950'
-          : 'bg-red-100 dark:bg-red-950',
-      iconColor: (stats?.successRate ?? 0) >= 90
-        ? 'text-emerald-600 dark:text-emerald-400'
-        : (stats?.successRate ?? 0) >= 75
-          ? 'text-amber-600 dark:text-amber-400'
-          : 'text-red-600 dark:text-red-400',
-      description: `${(stats?.denialRate ?? 0).toFixed(1)}% denial rate`,
+      icon: TrendingUp,
+      iconBg: 'bg-blue-100 dark:bg-blue-950',
+      iconColor: 'text-blue-600 dark:text-blue-400',
+      description: `currently paid, of sent claims · ${(stats?.denialRate ?? 0).toFixed(1)}% currently denied`,
     },
     {
+      // There is no computed value yet (the stats query returns null), so this
+      // says so instead of showing a made-up number.
       title: 'Avg. Days to Payment',
-      value: String(stats?.avgDaysToPayment ?? 0),
+      value: stats?.avgDaysToPayment == null ? 'Unavailable' : String(stats.avgDaysToPayment),
       icon: Clock,
-      iconBg: (stats?.avgDaysToPayment ?? 0) <= 30
-        ? 'bg-emerald-100 dark:bg-emerald-950'
-        : (stats?.avgDaysToPayment ?? 0) <= 45
-          ? 'bg-amber-100 dark:bg-amber-950'
-          : 'bg-red-100 dark:bg-red-950',
-      iconColor: (stats?.avgDaysToPayment ?? 0) <= 30
-        ? 'text-emerald-600 dark:text-emerald-400'
-        : (stats?.avgDaysToPayment ?? 0) <= 45
-          ? 'text-amber-600 dark:text-amber-400'
-          : 'text-red-600 dark:text-red-400',
-      description: 'Average processing time',
+      iconBg: 'bg-slate-100 dark:bg-slate-800',
+      iconColor: 'text-slate-500 dark:text-slate-400',
+      description: stats?.avgDaysToPayment == null ? 'Not calculated yet' : 'Submitted to paid',
     },
     {
       // Phase C: pre-submission audit-readiness. Counts not-yet-submitted
@@ -107,7 +106,7 @@ export default function DashboardStats({ stats }: DashboardStatsProps) {
               </div>
             </CardHeader>
             <CardContent className="px-4 md:px-6 pb-4 md:pb-6">
-              <div className="text-xl md:text-2xl font-bold text-foreground">{kpi.value}</div>
+              <div className={`${kpi.value === 'Unavailable' ? 'text-base md:text-lg text-muted-foreground' : 'text-xl md:text-2xl text-foreground'} font-bold`}>{kpi.value}</div>
               <p className="text-[10px] md:text-xs text-muted-foreground mt-1">
                 {kpi.description}
               </p>

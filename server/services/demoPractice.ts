@@ -339,6 +339,11 @@ const DEMO_PATIENTS = [
  * call, keyed by their @example.com address, so an already-seeded demo
  * practice picks them up on the next demo login without a reseed. Same
  * isolation rules as DEMO_PATIENTS: isDemo=false rows inside the demo practice.
+ *
+ * Fixtures are created ARCHIVED so a prospect browsing the demo sees only the
+ * realistic caseload. QA finds them under the patient list's archived filter
+ * and can unarchive one to exercise it; the lookup above still matches an
+ * archived row, so it is never recreated.
  */
 export const DEMO_FIXTURE_PATIENTS = [
   {
@@ -512,7 +517,7 @@ export async function ensureDemoFixturePatients(practiceId: number): Promise<num
   for (const f of DEMO_FIXTURE_PATIENTS) {
     const matches = await storage.getPatientsByEmail(f.email);
     if (matches.some((m: any) => m.practiceId === practiceId)) continue;
-    await storage.createPatient({
+    const patient = await storage.createPatient({
       practiceId,
       isDemo: false,
       firstName: f.firstName,
@@ -525,6 +530,8 @@ export async function ensureDemoFixturePatients(practiceId: number): Promise<num
       insuranceId: 'DEMO1099',
       policyNumber: 'POL5099',
     } as any);
+    // Hide it from visitors (see DEMO_FIXTURE_PATIENTS).
+    if (patient?.id) await storage.archivePatient(patient.id, practiceId);
     created++;
     logger.info('Demo fixture patient created', { practiceId, fixture: f.purpose });
   }

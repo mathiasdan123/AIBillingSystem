@@ -160,7 +160,7 @@ describe('Dashboard', () => {
 
   it('renders DashboardStats when stats data is available', () => {
     mocks.useQueryResults['/api/analytics/dashboard'] = {
-      data: { monthlyClaimsCount: 42, monthlyRevenue: 5000, successRate: 95, avgDaysToPayment: 14 },
+      data: { monthlyClaimsCount: 42, monthlyRevenue: 5000, successRate: 95, avgDaysToPayment: null },
       isLoading: false,
     };
     renderDashboard();
