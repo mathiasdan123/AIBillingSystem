@@ -777,7 +777,7 @@ export default function AiBillingAssistant() {
     <>
       {/* Greeting Popup — shows once on first visit */}
       {showGreeting && !isOpen && (
-        <div className="fixed bottom-24 right-6 z-50 w-80 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 p-5 animate-in slide-in-from-bottom-4 fade-in duration-300">
+        <div className="fixed bottom-[calc(8.5rem+env(safe-area-inset-bottom))] md:bottom-24 right-6 z-50 w-80 bg-white dark:bg-slate-900 rounded-xl shadow-2xl border border-slate-200 dark:border-slate-700 p-5 animate-in slide-in-from-bottom-4 fade-in duration-300">
           <div className="flex items-start gap-3">
             <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center flex-shrink-0 text-lg font-bold">B</div>
             <div className="flex-1">
@@ -825,7 +825,7 @@ export default function AiBillingAssistant() {
             localStorage.setItem(greetedKey(userId), GREETING_VERSION);
             setIsOpen(true);
           }}
-          className="fixed bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 hover:shadow-xl transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+          className="fixed bottom-[calc(5rem+env(safe-area-inset-bottom))] md:bottom-6 right-6 z-50 w-14 h-14 rounded-full bg-blue-600 text-white shadow-lg hover:bg-blue-700 hover:shadow-xl transition-all duration-200 flex items-center justify-center focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
           aria-label="Open Blanche, your AI billing assistant (Cmd+Shift+B)"
           title="Blanche — your AI assistant  (⌘⇧B)"
         >
