@@ -10,27 +10,33 @@ import {
 import { db } from "../db";
 import { eq, desc, and, gte, lte, count, sum, sql, isNull, or } from "drizzle-orm";
 import { ratePercent } from "../utils/claimRates";
+import { claimCohortAggregates, notDemoClaim } from "./claimCohort";
 
 // ==================== ANALYTICS ====================
 // Phase 5: every claims/patients/appointments aggregate excludes demo rows
 // (where is_demo = true). Demo data is for new-user navigation practice
 // and must not contaminate dashboards or reports. The helpers below produce
 // the per-table filter — apply them inside the WHERE clause of each query.
-const NOT_DEMO_CLAIM = eq(claims.isDemo, false);
+const NOT_DEMO_CLAIM = notDemoClaim();
 const NOT_DEMO_PATIENT = eq(patients.isDemo, false);
 const NOT_DEMO_APPOINTMENT = eq(appointments.isDemo, false);
 
 export async function getDashboardStats(practiceId: number): Promise<{
   totalClaims: number;
-  /** Claims that have been submitted (submitted, paid, denied or in appeal). */
-  submittedClaims: number;
-  /** Percent of submitted claims that were paid. */
+  /** Claims in the transmitted cohort (see storage/claimCohort.ts). */
+  transmittedClaims: number;
+  /** Percent of the transmitted cohort that is currently paid. A current-status snapshot. */
   successRate: number;
   totalRevenue: number;
-  avgDaysToPayment: number;
+  /**
+   * Not available: there is no computed value yet, so this is null rather than a
+   * placeholder number. It can be derived from paid_at and submitted_at on paid
+   * claims; until then the dashboard shows it as unavailable.
+   */
+  avgDaysToPayment: number | null;
   monthlyClaimsCount: number;
   monthlyRevenue: number;
-  /** Percent of submitted claims that were denied. */
+  /** Percent of the transmitted cohort that is currently in denied status. A current-status snapshot. */
   denialRate: number;
   pendingClaims: number;
   claimsAtComplianceRisk: number;
@@ -47,9 +53,7 @@ export async function getDashboardStats(practiceId: number): Promise<{
   const [row] = await db
     .select({
       totalClaims: sql<number>`COUNT(*)::int`,
-      submittedClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} IN ('submitted','paid','denied','appeal'))::int`,
-      paidClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'paid')::int`,
-      deniedClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'denied')::int`,
+      ...claimCohortAggregates(),
       pendingClaims: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'submitted')::int`,
       totalRevenue: sql<string>`COALESCE(SUM(${claims.paidAmount}) FILTER (WHERE ${claims.status} = 'paid'), 0)`,
       monthlyClaimsCount: sql<number>`COUNT(*) FILTER (WHERE ${claims.createdAt} >= ${currentMonth})::int`,
@@ -62,20 +66,20 @@ export async function getDashboardStats(practiceId: number): Promise<{
     .where(and(eq(claims.practiceId, practiceId), NOT_DEMO_CLAIM));
 
   const totalClaims = Number(row?.totalClaims) || 0;
-  const submittedClaims = Number(row?.submittedClaims) || 0;
-  const paidClaims = Number(row?.paidClaims) || 0;
-  const deniedClaims = Number(row?.deniedClaims) || 0;
+  const transmitted = Number(row?.transmitted) || 0;
+  const transmittedPaid = Number(row?.transmittedPaid) || 0;
+  const transmittedDenied = Number(row?.transmittedDenied) || 0;
   const pendingClaims = Number(row?.pendingClaims) || 0;
 
   return {
     totalClaims,
-    submittedClaims,
-    successRate: ratePercent(paidClaims, submittedClaims),
+    transmittedClaims: transmitted,
+    successRate: ratePercent(transmittedPaid, transmitted),
     totalRevenue: Number(row?.totalRevenue) || 0,
-    avgDaysToPayment: 14.2,
+    avgDaysToPayment: null,
     monthlyClaimsCount: Number(row?.monthlyClaimsCount) || 0,
     monthlyRevenue: Number(row?.monthlyRevenue) || 0,
-    denialRate: ratePercent(deniedClaims, submittedClaims),
+    denialRate: ratePercent(transmittedDenied, transmitted),
     pendingClaims,
     claimsAtComplianceRisk: Number(row?.claimsAtComplianceRisk) || 0,
   };

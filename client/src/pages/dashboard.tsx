@@ -312,7 +312,12 @@ export default function Dashboard() {
                 <p className={`text-lg md:text-xl font-bold ${(dailyInsights.denialRateTrailing7Day || 0) > 10 ? 'text-red-600' : 'text-amber-700 dark:text-amber-400'}`}>
                   {dailyInsights.denialRateTrailing7Day || 0}%
                 </p>
-                <p className="text-[10px] md:text-xs text-muted-foreground">7-Day Denial Rate</p>
+                <p
+                  className="text-[10px] md:text-xs text-muted-foreground"
+                  title="Of claims created in the last 7 days that have been sent, the share currently denied"
+                >
+                  7-Day Denial Rate
+                </p>
               </div>
             </div>
 

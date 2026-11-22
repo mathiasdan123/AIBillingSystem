@@ -9,6 +9,7 @@ import { storage } from '../storage';
 import { getDb } from '../db';
 import { claims, appointments } from '@shared/schema';
 import { eq, and, gte, lte, lt, sql, count, sum } from 'drizzle-orm';
+import { claimCohortAggregates, notDemoClaim } from '../storage/claimCohort';
 import { getExpiringAuthorizations } from './authorizationService';
 import { getBusinessTimeZone, zonedStartOfDay, zonedStartOfNextDay, zonedAddDays } from '../utils/timezone';
 import logger from './logger';
@@ -112,25 +113,28 @@ function percentChange(current: number, previous: number): number {
   return Math.round(((current - previous) / previous) * 10000) / 100;
 }
 
-async function getClaimCountsByDateRange(
+export async function getClaimCountsByDateRange(
   db: any,
   practiceId: number,
   start: Date,
   end: Date,
-): Promise<{ total: number; paid: number; denied: number; submitted: number; submittedTotal: number }> {
+): Promise<{ total: number; paid: number; denied: number; submitted: number; transmitted: number; transmittedDenied: number }> {
   const rows = await db
     .select({
       total: count(),
       paid: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'paid')`,
       denied: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'denied')`,
       submitted: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} = 'submitted')`,
-      // Claims that have actually been submitted (any outcome); the base for rates.
-      submittedTotal: sql<number>`COUNT(*) FILTER (WHERE ${claims.status} IN ('submitted','paid','denied','appeal'))`,
+      // The shared rate cohort (storage/claimCohort.ts): the same population the
+      // dashboard and the Claims page rates use.
+      ...claimCohortAggregates(),
     })
     .from(claims)
     .where(
       and(
         eq(claims.practiceId, practiceId),
+        // Demo-tagged rows never count in analytics.
+        notDemoClaim(),
         gte(claims.createdAt, start),
         lt(claims.createdAt, end),
       ),
@@ -141,7 +145,8 @@ async function getClaimCountsByDateRange(
     paid: Number(rows[0]?.paid) || 0,
     denied: Number(rows[0]?.denied) || 0,
     submitted: Number(rows[0]?.submitted) || 0,
-    submittedTotal: Number(rows[0]?.submittedTotal) || 0,
+    transmitted: Number(rows[0]?.transmitted) || 0,
+    transmittedDenied: Number(rows[0]?.transmittedDenied) || 0,
   };
 }
 
@@ -220,11 +225,12 @@ export async function generateDailyReport(
 
   // Trailing 7-day denial rate
   const trailing7d = await getClaimCountsByDateRange(db, practiceId, sevenDaysAgo, dayEnd);
-  // Measured against submitted claims, like the dashboard denial rate. Drafts
-  // created this week have not been submitted and cannot be denied yet.
+  // Same cohort and meaning as the dashboard denial rate (storage/claimCohort.ts):
+  // of the claims CREATED in the trailing 7 days that have been transmitted, the
+  // share currently in denied status.
   const denialRateTrailing7Day =
-    trailing7d.submittedTotal > 0
-      ? Math.round((trailing7d.denied / trailing7d.submittedTotal) * 10000) / 100
+    trailing7d.transmitted > 0
+      ? Math.round((trailing7d.transmittedDenied / trailing7d.transmitted) * 10000) / 100
       : 0;
 
   // Expiring authorizations (next 7 days)
@@ -304,7 +310,7 @@ export async function generateDailyReport(
     actionItems.push({
       priority: 'high',
       category: 'Denial Rate',
-      description: `Trailing 7-day denial rate is ${denialRateTrailing7Day}% (${trailing7d.denied} of ${trailing7d.submittedTotal} submitted claims), which exceeds the 10% threshold. Review claim submission accuracy.`,
+      description: `Trailing 7-day denial rate is ${denialRateTrailing7Day}% (${trailing7d.transmittedDenied} of ${trailing7d.transmitted} sent claims created in the last 7 days), which exceeds the 10% threshold. Review claim submission accuracy.`,
     });
   }
 

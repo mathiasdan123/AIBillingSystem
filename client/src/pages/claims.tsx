@@ -1407,7 +1407,8 @@ export default function Claims() {
   // Status counts + sums for the stat tiles, across ALL claims (not just this page).
   const { data: claimsSummary } = useQuery<{
     total: number; draft: number; submitted: number; paid: number; denied: number; held: number;
-    appeal?: number;
+    // The shared rate cohort (sent at least once, demo rows excluded).
+    transmitted?: number; transmittedPaid?: number; transmittedDenied?: number;
     totalAmount: number; paidAmount: number; pendingAmount: number;
   }>({
     queryKey: [`/api/claims/summary?practiceId=${practiceId}`],
@@ -2386,16 +2387,12 @@ export default function Claims() {
     submitted: claimsSummary?.submitted || 0,
     paid: claimsSummary?.paid || 0,
     denied: claimsSummary?.denied || 0,
-    appeal: claimsSummary?.appeal || 0,
+    transmitted: claimsSummary?.transmitted || 0,
+    transmittedPaid: claimsSummary?.transmittedPaid || 0,
     totalAmount: claimsSummary?.totalAmount || 0,
     paidAmount: claimsSummary?.paidAmount || 0,
     pendingAmount: claimsSummary?.pendingAmount || 0,
   };
-
-  // Claims that have been submitted (any outcome). Drafts and held claims have
-  // not had a chance to be paid, so they stay out of the paid-rate base. Matches
-  // the dashboard definition.
-  const submittedClaimCount = stats.submitted + stats.paid + stats.denied + stats.appeal;
 
   // While the patient / payer lists are still loading (right after a deploy
   // the first render has claims but not patients yet), show a placeholder
@@ -3272,9 +3269,9 @@ export default function Claims() {
               <div>
                 <p className="text-xs md:text-sm text-muted-foreground">Paid Rate</p>
                 <p className="text-xl md:text-2xl font-bold text-blue-600">
-                  {submittedClaimCount > 0 ? ((stats.paid / submittedClaimCount) * 100).toFixed(0) : 0}%
+                  {stats.transmitted > 0 ? ((stats.transmittedPaid / stats.transmitted) * 100).toFixed(0) : 0}%
                 </p>
-                <p className="text-[10px] md:text-xs text-muted-foreground">of submitted claims</p>
+                <p className="text-[10px] md:text-xs text-muted-foreground">currently paid, of sent claims</p>
               </div>
               <div className="p-2 bg-blue-100 rounded-lg">
                 <TrendingUp className="w-5 h-5 text-blue-600" />
