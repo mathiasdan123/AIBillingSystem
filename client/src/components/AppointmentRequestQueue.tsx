@@ -3,7 +3,6 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import {
@@ -244,51 +243,29 @@ export default function AppointmentRequestQueue({ practiceId = 1 }: AppointmentR
     }
   };
 
+  // Nothing to show while loading or when there are no pending requests: the
+  // card collapses entirely so an empty queue does not push the calendar down.
+  // The approve/reject dialogs below stay mounted either way.
   if (isLoading) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5" />
-            Pending Appointment Requests
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            {[1, 2, 3].map((i) => (
-              <Skeleton key={i} className="h-24 w-full" />
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    );
+    return null;
   }
 
   return (
     <>
+      {requests.length > 0 && (
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Clock className="h-5 w-5 text-yellow-600" />
             Pending Appointment Requests
-            {requests.length > 0 && (
-              <Badge variant="secondary">{requests.length}</Badge>
-            )}
+            <Badge variant="secondary">{requests.length}</Badge>
           </CardTitle>
           <CardDescription>
             Review and approve appointment requests from patients
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {requests.length === 0 ? (
-            <div className="text-center py-8">
-              <CheckCircle className="h-12 w-12 text-green-500 mx-auto mb-4" />
-              <p className="text-muted-foreground">No pending requests</p>
-              <p className="text-sm text-muted-foreground">
-                New requests from patients will appear here
-              </p>
-            </div>
-          ) : (
+          {(
             <div className="space-y-4">
               {requests.map((request) => (
                 <div
@@ -384,6 +361,7 @@ export default function AppointmentRequestQueue({ practiceId = 1 }: AppointmentR
           )}
         </CardContent>
       </Card>
+      )}
 
       {/* Approve Dialog */}
       <Dialog open={approveDialogOpen} onOpenChange={setApproveDialogOpen}>

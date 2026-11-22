@@ -1141,7 +1141,7 @@ export default function CalendarPage() {
         </Card>
 
         {/* Pending Appointment Requests */}
-        <div className="mb-6">
+        <div className="mb-6 empty:hidden">
           <AppointmentRequestQueue practiceId={1} />
         </div>
 
@@ -1279,7 +1279,7 @@ export default function CalendarPage() {
             )}
 
             {view === "week" && (
-              <div className="hidden md:grid grid-cols-8 border-b">
+              <div className="hidden md:grid grid-cols-[4rem_repeat(7,minmax(0,1fr))] border-b">
                 <div className="w-16 border-r" />
                 {weekDates.map((date, i) => (
                   <div key={i} className={"p-2 text-center border-r last:border-r-0 " + (date.toDateString() === new Date().toDateString() ? "bg-blue-50" : "")}>
@@ -1291,7 +1291,7 @@ export default function CalendarPage() {
             )}
             {/* Desktop: traditional time grid */}
             <div className={"hidden relative " + (view === "month" ? "" : "md:block")}>
-              <div className={"grid " + (view === "week" ? "grid-cols-8" : "grid-cols-2")}>
+              <div className={"grid " + (view === "week" ? "grid-cols-[4rem_repeat(7,minmax(0,1fr))]" : "grid-cols-[4rem_minmax(0,1fr)]")}>
                 <div className="w-16 border-r">
                   {HOURS.map((h) => (
                     <div key={h} className="h-16 border-b text-xs text-slate-500 text-right pr-2 pt-1">
@@ -1307,7 +1307,7 @@ export default function CalendarPage() {
                       return (
                       <div
                         key={apt.id}
-                        className={"absolute left-1 right-1 rounded-lg p-2 cursor-pointer hover:ring-2 hover:ring-blue-300 transition " + getCalendarBlockStyle(apt)}
+                        className={"absolute left-1 right-1 rounded-lg " + (view === "week" ? "px-1.5 py-1" : "p-2") + " overflow-hidden cursor-pointer hover:ring-2 hover:ring-blue-300 transition " + getCalendarBlockStyle(apt)}
                         style={getAppointmentStyle(apt)}
                         onClick={() => {
                           // Reviewer fix #4: open the unified actions dialog from
@@ -1322,36 +1322,60 @@ export default function CalendarPage() {
                         }}
                         data-testid={`grid-cell-appointment-${apt.id}`}
                       >
-                        <div className="flex items-start justify-between gap-1">
-                          <div className="text-xs font-medium truncate flex items-center gap-1 min-w-0">
-                            {(apt as any).isRecurring && <Repeat className="w-3 h-3 flex-shrink-0" />}
-                            {(() => {
-                              const patient = patients.find((p: any) => p.id === apt.patientId);
-                              return patient
-                                ? `${(patient as any).firstName} ${(patient as any).lastName}`
-                                : (apt.title || "Appointment");
-                            })()}
-                          </div>
-                          {/* Status badge — always visible on the grid block so
-                              checked-in / in-session / cancelled / no-show are
-                              immediately distinguishable without hovering. */}
-                          <span className={"text-[9px] px-1.5 py-0.5 rounded-full font-semibold leading-tight flex-shrink-0 " + getStatusColor(statusLabel)}>
-                            {statusLabel}
-                          </span>
-                        </div>
-                        <div className="text-xs text-slate-600 truncate">
-                          {formatTime(apt.startTime)}
-                          {apt.title && ` · ${apt.title}`}
-                          {apt.therapistId && (() => {
-                            const therapist = therapists.find((t: any) => t.id === apt.therapistId);
-                            return therapist ? ` - ${therapist.firstName}` : "";
-                          })()}
-                          {(apt as any).locationId && (() => {
-                            const loc = locations.find((l: any) => l.id === (apt as any).locationId);
-                            return loc ? ` @ ${loc.name}` : "";
-                          })()}
-                          {apt.status === "cancelled" && ` (Cancelled${(apt as any).cancelledBy ? ` by ${(apt as any).cancelledBy === "patient" ? "Patient" : "Staff"}` : ""})`}
-                        </div>
+                        {(() => {
+                          const patient = patients.find((p: any) => p.id === apt.patientId);
+                          const name = patient
+                            ? `${(patient as any).firstName} ${(patient as any).lastName}`
+                            : (apt.title || "Appointment");
+                          const therapist = apt.therapistId ? therapists.find((t: any) => t.id === apt.therapistId) : undefined;
+                          const loc = (apt as any).locationId ? locations.find((l: any) => l.id === (apt as any).locationId) : undefined;
+                          const details =
+                            (apt.title ? ` · ${apt.title}` : "") +
+                            (therapist ? ` - ${therapist.firstName}` : "") +
+                            (loc ? ` @ ${loc.name}` : "") +
+                            (apt.status === "cancelled" ? ` (Cancelled${(apt as any).cancelledBy ? ` by ${(apt as any).cancelledBy === "patient" ? "Patient" : "Staff"}` : ""})` : "");
+                          const badgeClass = "text-[9px] px-1.5 py-0.5 rounded-full font-semibold leading-tight flex-shrink-0 " + getStatusColor(statusLabel);
+                          if (view === "week") {
+                            // Blocks under ~45 minutes are too short for a wrapped
+                            // name plus the time row; they show the name only.
+                            const tall = (new Date(apt.endTime).getTime() - new Date(apt.startTime).getTime()) >= 45 * 60000;
+                            // Week columns are narrow: the name gets the full width
+                            // (wrapping to two lines) and the status badge sits next
+                            // to the time instead of competing with the name.
+                            return (
+                              <div title={`${name} — ${formatTime(apt.startTime)} — ${statusLabel}${details}`}>
+                                <div className={"text-xs font-medium leading-tight " + (tall ? "line-clamp-2 break-words" : "truncate")}>
+                                  {(apt as any).isRecurring && <Repeat className="w-3 h-3 inline mr-1 align-[-2px]" />}
+                                  {name}
+                                </div>
+                                {tall && (
+                                  <div className="mt-0.5 flex flex-wrap items-center gap-x-1 text-[10px] text-slate-600 min-w-0">
+                                    <span className="flex-shrink-0">{formatTime(apt.startTime)}</span>
+                                    <span className={badgeClass.replace("px-1.5", "px-1")}>{String(statusLabel).replace(/_/g, " ")}</span>
+                                  </div>
+                                )}
+                              </div>
+                            );
+                          }
+                          return (
+                            <>
+                              <div className="flex items-start justify-between gap-1">
+                                <div className="text-xs font-medium truncate flex items-center gap-1 min-w-0">
+                                  {(apt as any).isRecurring && <Repeat className="w-3 h-3 flex-shrink-0" />}
+                                  {name}
+                                </div>
+                                {/* Status badge — always visible on the grid block so
+                                    checked-in / in-session / cancelled / no-show are
+                                    immediately distinguishable without hovering. */}
+                                <span className={badgeClass}>{statusLabel}</span>
+                              </div>
+                              <div className="text-xs text-slate-600 truncate">
+                                {formatTime(apt.startTime)}
+                                {details}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                       );
                     })}
