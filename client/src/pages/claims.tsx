@@ -2589,10 +2589,10 @@ export default function Claims() {
           <h1 className="text-xl md:text-2xl font-bold text-foreground">Claims Management</h1>
           <p className="text-sm md:text-base text-muted-foreground">Create, track, and manage insurance claims</p>
         </div>
-        <div className="flex gap-2 overflow-x-auto pb-1 sm:pb-0 -mx-1 px-1">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
-            className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0"
+            className="min-h-[44px] whitespace-nowrap text-xs md:text-sm"
             disabled={exporting}
             data-testid="button-export-claims"
             onClick={async () => {
@@ -2638,18 +2638,18 @@ export default function Claims() {
             <span className="hidden sm:inline">{exporting ? "Exporting…" : "Export Claims"}</span>
             <span className="sm:hidden">{exporting ? "Exporting…" : "Export"}</span>
           </Button>
-          <Button variant="outline" onClick={() => setShowSessionsDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
+          <Button variant="outline" onClick={() => setShowSessionsDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm">
             <FileText className="w-4 h-4 mr-1 md:mr-2" />
             <span className="hidden sm:inline">Generate from Session</span>
             <span className="sm:hidden">From Session</span>
           </Button>
-          <Button variant="outline" onClick={() => setShowSuperbillDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
+          <Button variant="outline" onClick={() => setShowSuperbillDialog(true)} className="min-h-[44px] whitespace-nowrap text-xs md:text-sm">
             <DollarSign className="w-4 h-4 mr-1 md:mr-2" />
             Superbill
           </Button>
           <Dialog open={showCreateDialog} onOpenChange={setShowCreateDialog}>
             <DialogTrigger asChild>
-              <Button className="min-h-[44px] whitespace-nowrap text-xs md:text-sm flex-shrink-0">
+              <Button className="min-h-[44px] whitespace-nowrap text-xs md:text-sm">
                 <Plus className="w-4 h-4 mr-1 md:mr-2" />
                 New Claim
               </Button>

@@ -1149,13 +1149,13 @@ export default function CalendarPage() {
         <Card className="mb-4 md:mb-6 relative z-10">
           <CardContent className="py-3 md:py-4 px-3 md:px-6">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-2">
-              <div className="flex items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
+              <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
                 <div className="flex items-center gap-1.5">
                   <Button variant="outline" size="sm" className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0" onClick={() => view === "month" ? navigateMonth(-1) : view === "week" ? navigateWeek(-1) : navigateDay(-1)}><ChevronLeft className="w-4 h-4" /></Button>
                   <Button variant="outline" size="sm" className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0" onClick={() => view === "month" ? navigateMonth(1) : view === "week" ? navigateWeek(1) : navigateDay(1)}><ChevronRight className="w-4 h-4" /></Button>
                   <Button variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" onClick={() => setCurrentDate(new Date())}>Today</Button>
                 </div>
-                <div className="flex items-center gap-1.5 sm:hidden">
+                <div className="flex flex-wrap items-center gap-1.5 sm:hidden">
                   <Button variant={view === "day" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("day")}>Day</Button>
                   <Button variant={view === "week" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("week")}>Week</Button>
                   <Button variant={view === "month" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("month")}>Month</Button>
