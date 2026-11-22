@@ -4,6 +4,9 @@ import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import DateRangeControl from "@/components/DateRangeControl";
+import { useDateRange } from "@/hooks/useDateRange";
+import { addDays, monthsBefore, toIsoDate, type RangePreset } from "@/lib/dateRange";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
@@ -64,26 +67,6 @@ interface HeatmapCell {
 const DAY_NAMES = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const DAY_FULL_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 
-function getDateRange(period: string): { start: string; end: string } {
-  const now = new Date();
-  const end = new Date(now);
-  end.setDate(end.getDate() + 7);
-
-  const start = new Date(now);
-  if (period === "week") {
-    start.setDate(start.getDate() - 7);
-  } else if (period === "month") {
-    start.setMonth(start.getMonth() - 1);
-  } else if (period === "quarter") {
-    start.setMonth(start.getMonth() - 3);
-  }
-
-  return {
-    start: start.toISOString().slice(0, 10),
-    end: end.toISOString().slice(0, 10),
-  };
-}
-
 function formatHour(hour: number): string {
   if (hour === 0) return "12 AM";
   if (hour < 12) return `${hour} AM`;
@@ -123,10 +106,18 @@ function getSeverityBadge(severity: string) {
 
 export default function SchedulingInsightsPage() {
   const { t } = useTranslation();
-  const [period, setPeriod] = useState("month");
+  const presets: RangePreset[] = [
+    // These windows run a week past today so upcoming open slots are included.
+    { value: "week", label: t("schedulingInsights.lastWeek", "Last Week"), resolve: (d) => ({ start: toIsoDate(addDays(d, -7)), end: toIsoDate(addDays(d, 7)) }) },
+    { value: "month", label: t("schedulingInsights.lastMonth", "Last Month"), resolve: (d) => ({ start: toIsoDate(monthsBefore(d, 1)), end: toIsoDate(addDays(d, 7)) }) },
+    { value: "quarter", label: t("schedulingInsights.lastQuarter", "Last Quarter"), resolve: (d) => ({ start: toIsoDate(monthsBefore(d, 3)), end: toIsoDate(addDays(d, 7)) }) },
+  ];
+  const rangeState = useDateRange(presets, "month");
   const [selectedTherapist, setSelectedTherapist] = useState<string>("all");
 
-  const dateRange = getDateRange(period);
+  // Empty strings only while custom dates are incomplete; the queries below wait for a range.
+  const dateRange = rangeState.range ?? { start: "", end: "" };
+  const hasRange = !!rangeState.range;
 
   // Fetch therapists
   const { data: therapists = [] } = useQuery<any[]>({
@@ -156,6 +147,7 @@ export default function SchedulingInsightsPage() {
       if (!res.ok) throw new Error("Failed to fetch heatmap");
       return res.json();
     },
+    enabled: hasRange,
   });
 
   // Fetch insights
@@ -194,7 +186,7 @@ export default function SchedulingInsightsPage() {
       if (!res.ok) throw new Error("Failed to fetch analysis");
       return res.json();
     },
-    enabled: selectedTherapist !== "all",
+    enabled: selectedTherapist !== "all" && hasRange,
   });
 
   // Fetch optimal slots for selected therapist
@@ -239,22 +231,7 @@ export default function SchedulingInsightsPage() {
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <Select value={period} onValueChange={setPeriod}>
-              <SelectTrigger className="w-[140px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="week">
-                  {t("schedulingInsights.lastWeek", "Last Week")}
-                </SelectItem>
-                <SelectItem value="month">
-                  {t("schedulingInsights.lastMonth", "Last Month")}
-                </SelectItem>
-                <SelectItem value="quarter">
-                  {t("schedulingInsights.lastQuarter", "Last Quarter")}
-                </SelectItem>
-              </SelectContent>
-            </Select>
+            <DateRangeControl state={rangeState} triggerClassName="w-[140px]" testId="scheduling-range" />
             <Select value={selectedTherapist} onValueChange={setSelectedTherapist}>
               <SelectTrigger className="w-[200px]">
                 <SelectValue placeholder={t("schedulingInsights.allTherapists", "All Therapists")} />
@@ -463,7 +440,7 @@ export default function SchedulingInsightsPage() {
                   </div>
                   <Button
                     onClick={() => refetchInsights()}
-                    disabled={insightsLoading}
+                    disabled={insightsLoading || !hasRange}
                   >
                     {insightsLoading ? (
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />

@@ -28,6 +28,7 @@ import {
 } from '../services/reconciliation/plaidService';
 import { depositStatement, reconcilePractice } from '../services/reconciliation/reconciliationService';
 import logger from '../services/logger';
+import { parseDateRangeQuery } from '../utils/dateRangeParams';
 
 const router = Router();
 
@@ -157,6 +158,9 @@ router.get('/statement', isAuthenticated, async (req: any, res) => {
     if (!from || !to || !/^\d{4}-\d{2}-\d{2}$/.test(from) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
       return res.status(400).json({ message: 'from and to (YYYY-MM-DD) are required' });
     }
+    // Same rules as every other report range: real dates, in order, bounded.
+    const range = parseDateRangeQuery(from, to);
+    if (range.kind === 'error') return res.status(400).json({ message: range.message });
     res.json(await depositStatement(practiceId, from, to));
   } catch (error) {
     safeErrorResponse(res, 500, 'Failed to build deposit statement', error);

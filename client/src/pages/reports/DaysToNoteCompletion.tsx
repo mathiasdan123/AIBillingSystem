@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import ReportPageLayout from "./ReportPageLayout";
+import { useReportRange } from "@/hooks/useReportRange";
 
 interface Row {
   therapistId: string | null;
@@ -24,10 +25,11 @@ const fmtPct = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 100)}%
 const fmtDays = (n: number | null) => (n == null ? "—" : `${n.toFixed(1)}d`);
 
 export default function DaysToNoteCompletion() {
+  const { url, control } = useReportRange("/api/reports/days-to-note-completion");
   const { data, isLoading, isError } = useQuery<ReportResponse>({
-    queryKey: ["/api/reports/days-to-note-completion"],
+    queryKey: [url],
     queryFn: async () => {
-      const res = await fetch("/api/reports/days-to-note-completion", { credentials: "include" });
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load report");
       return res.json();
     },
@@ -44,6 +46,7 @@ export default function DaysToNoteCompletion() {
 
   return (
     <ReportPageLayout
+      actions={control}
       title="Days to Note Completion"
       description="Time from treatment session to signed SOAP note, per therapist."
       isLoading={isLoading}

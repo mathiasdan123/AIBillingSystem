@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import ReportPageLayout from "./ReportPageLayout";
+import { useReportRange } from "@/hooks/useReportRange";
 
 interface Row {
   month: string | null;
@@ -19,10 +20,11 @@ interface ReportResponse {
 const fmtMoney = (s: string | null | undefined) => `$${Number(s ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 export default function Adjustments() {
+  const { url, control } = useReportRange("/api/reports/adjustments");
   const { data, isLoading, isError } = useQuery<ReportResponse>({
-    queryKey: ["/api/reports/adjustments"],
+    queryKey: [url],
     queryFn: async () => {
-      const res = await fetch("/api/reports/adjustments", { credentials: "include" });
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load report");
       return res.json();
     },
@@ -34,6 +36,7 @@ export default function Adjustments() {
 
   return (
     <ReportPageLayout
+      actions={control}
       title="Adjustments Report"
       description="Primary-payer contractual write-offs grouped by month and payer."
       isLoading={isLoading}

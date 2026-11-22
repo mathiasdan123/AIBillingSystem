@@ -38,6 +38,8 @@ import {
 } from '@shared/schema';
 import { and, asc, desc, eq, gte, isNotNull, isNull, lte, or, sql } from 'drizzle-orm';
 import logger from '../services/logger';
+import { parseDateRangeQuery } from '../utils/dateRangeParams';
+import { getBusinessTimeZone, zonedDateString } from '../utils/timezone';
 
 const router = Router();
 
@@ -56,12 +58,33 @@ const getAuthorizedPracticeId = (req: any): number => {
   return requested || userPracticeId;
 };
 
-const parseRange = (req: any): { start: Date; end: Date } => {
-  const end = req.query.end ? new Date(req.query.end as string) : new Date();
-  const start = req.query.start
-    ? new Date(req.query.start as string)
-    : new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);
-  return { start, end };
+/**
+ * The report window. A person-chosen range (?start=YYYY-MM-DD&end=YYYY-MM-DD)
+ * covers the whole of both days in the business time zone; with no parameters
+ * the window is the last 90 days. `startDate` / `endDate` are the same bounds
+ * as calendar-date strings, for columns that store dates rather than instants.
+ */
+const parseRange = (req: any): { start: Date; end: Date; startDate: string; endDate: string } => {
+  const parsed = parseDateRangeQuery(req.query.start, req.query.end);
+  if (parsed.kind === 'ok') {
+    return {
+      start: parsed.start,
+      end: new Date(parsed.endExclusive.getTime() - 1),
+      startDate: parsed.startDate,
+      endDate: parsed.endDate,
+    };
+  }
+  const end = new Date();
+  const start = new Date(end.getTime() - 90 * 24 * 60 * 60 * 1000);
+  const tz = getBusinessTimeZone();
+  return { start, end, startDate: zonedDateString(start, tz), endDate: zonedDateString(end, tz) };
+};
+
+/** Answers 400 for a malformed or oversized ?start / ?end instead of failing inside the report. */
+const rangeGuard = (req: any, res: any, next: any) => {
+  const parsed = parseDateRangeQuery(req.query.start, req.query.end);
+  if (parsed.kind === 'error') return res.status(400).json({ message: parsed.message });
+  next();
 };
 
 // ============================================================
@@ -69,10 +92,10 @@ const parseRange = (req: any): { start: Date; end: Date } => {
 // ============================================================
 // For each completed treatment session, time from session date to the
 // associated SOAP note's therapistSignedAt. Aggregated per therapist.
-router.get('/days-to-note-completion', isAuthenticated, async (req: any, res) => {
+router.get('/days-to-note-completion', isAuthenticated, rangeGuard, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { start, end } = parseRange(req);
+    const { start, end, startDate, endDate } = parseRange(req);
 
     const rows = await db
       .select({
@@ -91,8 +114,8 @@ router.get('/days-to-note-completion', isAuthenticated, async (req: any, res) =>
       .where(
         and(
           eq(treatmentSessions.practiceId, practiceId),
-          gte(treatmentSessions.sessionDate, start.toISOString().split('T')[0]),
-          lte(treatmentSessions.sessionDate, end.toISOString().split('T')[0]),
+          gte(treatmentSessions.sessionDate, startDate),
+          lte(treatmentSessions.sessionDate, endDate),
         ),
       )
       .groupBy(treatmentSessions.therapistId, users.firstName, users.lastName);
@@ -107,10 +130,10 @@ router.get('/days-to-note-completion', isAuthenticated, async (req: any, res) =>
 // ============================================================
 // Cancellations Report
 // ============================================================
-router.get('/cancellations', isAuthenticated, async (req: any, res) => {
+router.get('/cancellations', isAuthenticated, rangeGuard, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { start, end } = parseRange(req);
+    const { start, end, startDate, endDate } = parseRange(req);
 
     const byReason = await db
       .select({
@@ -220,10 +243,10 @@ router.get('/timely-filing', isAuthenticated, requireFinancialRole, async (req: 
 // Adjustments live on the claims.primaryAdjustmentAmount column (primary
 // payer write-offs); aggregated by month-of-service and payer.
 // Financial: payer adjustments and write-off dollars.
-router.get('/adjustments', isAuthenticated, requireFinancialRole, async (req: any, res) => {
+router.get('/adjustments', isAuthenticated, requireFinancialRole, rangeGuard, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { start, end } = parseRange(req);
+    const { start, end, startDate, endDate } = parseRange(req);
 
     const rows = await db
       .select({
@@ -238,8 +261,8 @@ router.get('/adjustments', isAuthenticated, requireFinancialRole, async (req: an
       .where(
         and(
           eq(claims.practiceId, practiceId),
-          gte(treatmentSessions.sessionDate, start.toISOString().split('T')[0]),
-          lte(treatmentSessions.sessionDate, end.toISOString().split('T')[0]),
+          gte(treatmentSessions.sessionDate, startDate),
+          lte(treatmentSessions.sessionDate, endDate),
           sql`COALESCE(${claims.primaryAdjustmentAmount}::numeric, 0) > 0`,
         ),
       )
@@ -256,10 +279,10 @@ router.get('/adjustments', isAuthenticated, requireFinancialRole, async (req: an
 // ============================================================
 // Intake Completion
 // ============================================================
-router.get('/intake-completion', isAuthenticated, async (req: any, res) => {
+router.get('/intake-completion', isAuthenticated, rangeGuard, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { start, end } = parseRange(req);
+    const { start, end, startDate, endDate } = parseRange(req);
 
     const totalsRow = await db
       .select({
@@ -308,10 +331,10 @@ router.get('/intake-completion', isAuthenticated, async (req: any, res) => {
 // ============================================================
 // Referrals by Month
 // ============================================================
-router.get('/referrals', isAuthenticated, async (req: any, res) => {
+router.get('/referrals', isAuthenticated, rangeGuard, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { start, end } = parseRange(req);
+    const { start, end, startDate, endDate } = parseRange(req);
 
     const byMonth = await db
       .select({
@@ -322,8 +345,8 @@ router.get('/referrals', isAuthenticated, async (req: any, res) => {
       .where(
         and(
           eq(referrals.practiceId, practiceId),
-          gte(referrals.referralDate, start.toISOString().split('T')[0]),
-          lte(referrals.referralDate, end.toISOString().split('T')[0]),
+          gte(referrals.referralDate, startDate),
+          lte(referrals.referralDate, endDate),
         ),
       )
       .groupBy(sql`TO_CHAR(${referrals.referralDate}, 'YYYY-MM')`)
@@ -340,8 +363,8 @@ router.get('/referrals', isAuthenticated, async (req: any, res) => {
       .where(
         and(
           eq(referrals.practiceId, practiceId),
-          gte(referrals.referralDate, start.toISOString().split('T')[0]),
-          lte(referrals.referralDate, end.toISOString().split('T')[0]),
+          gte(referrals.referralDate, startDate),
+          lte(referrals.referralDate, endDate),
         ),
       )
       .groupBy(referralSources.name, referrals.externalProviderName, referralSources.type)
@@ -411,10 +434,10 @@ router.get('/unverified-benefits', isAuthenticated, async (req: any, res) => {
 // the number of times each day-of-week occurs in the range.
 // Booked hours = sum of appointment durations (scheduled or completed),
 // excluding cancelled/no_show.
-router.get('/capacity-utilization', isAuthenticated, async (req: any, res) => {
+router.get('/capacity-utilization', isAuthenticated, rangeGuard, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { start, end } = parseRange(req);
+    const { start, end, startDate, endDate } = parseRange(req);
 
     // Available hours per therapist, by counting day-of-week occurrences in range.
     const availabilityRows = await db
@@ -644,10 +667,10 @@ router.get('/patient-credits', isAuthenticated, requireFinancialRole, async (req
 // Practice-wide rollup over the requested range: visits, cancellations,
 // no-shows, new patients, completed notes, claims submitted, payments
 // collected. One row per month for trend; plus a totals block.
-router.get('/operations', isAuthenticated, async (req: any, res) => {
+router.get('/operations', isAuthenticated, rangeGuard, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const { start, end } = parseRange(req);
+    const { start, end, startDate, endDate } = parseRange(req);
 
     const apptRows = await db
       .select({
@@ -725,8 +748,8 @@ router.get('/operations', isAuthenticated, async (req: any, res) => {
         and(
           eq(payments.practiceId, practiceId),
           eq(payments.status, 'completed'),
-          gte(payments.paymentDate, start.toISOString().split('T')[0]),
-          lte(payments.paymentDate, end.toISOString().split('T')[0]),
+          gte(payments.paymentDate, startDate),
+          lte(payments.paymentDate, endDate),
         ),
       )
       .groupBy(sql`TO_CHAR(${payments.paymentDate}, 'YYYY-MM')`);

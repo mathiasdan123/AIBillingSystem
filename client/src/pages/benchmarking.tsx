@@ -5,6 +5,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/hooks/useAuth";
 import { useToast } from "@/hooks/use-toast";
+import DateRangeControl from "@/components/DateRangeControl";
+import { useDateRange } from "@/hooks/useDateRange";
+import { lastMonths, type RangePreset } from "@/lib/dateRange";
 import {
   TrendingUp,
   TrendingDown,
@@ -46,11 +49,13 @@ interface TrendMonth {
 // Helpers
 // ---------------------------------------------------------------------------
 
-const PERIOD_OPTIONS = [
-  { value: "1m", label: "Current Month" },
-  { value: "3m", label: "Last 3 Months" },
-  { value: "6m", label: "Last 6 Months" },
-  { value: "12m", label: "Last 12 Months" },
+// The preset values are the server's period codes; "Custom dates" sends the
+// chosen start and end instead.
+const PERIOD_OPTIONS: RangePreset[] = [
+  { value: "1m", label: "Current Month", resolve: lastMonths(1) },
+  { value: "3m", label: "Last 3 Months", resolve: lastMonths(3) },
+  { value: "6m", label: "Last 6 Months", resolve: lastMonths(6) },
+  { value: "12m", label: "Last 12 Months", resolve: lastMonths(12) },
 ];
 
 const GROUP_LABELS: Record<string, string> = {
@@ -171,7 +176,7 @@ function TrendArrow({ current, previous, lowerIsBetter }: { current: number; pre
 export default function Benchmarking() {
   const { isAuthenticated, isLoading: authLoading } = useAuth();
   const { toast } = useToast();
-  const [period, setPeriod] = useState("3m");
+  const periodState = useDateRange(PERIOD_OPTIONS, "3m", { limitToToday: true });
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -187,9 +192,14 @@ export default function Benchmarking() {
   });
 
   // Fetch practice KPIs for selected period
+  const metricsUrl = periodState.isCustom
+    ? periodState.range
+      ? `/api/benchmarking/metrics?start=${periodState.range.start}&end=${periodState.range.end}`
+      : null
+    : `/api/benchmarking/metrics?period=${periodState.preset}`;
   const { data: metrics, isLoading: metricsLoading } = useQuery<KPIValues>({
-    queryKey: [`/api/benchmarking/metrics?period=${period}`],
-    enabled: isAuthenticated,
+    queryKey: [metricsUrl],
+    enabled: isAuthenticated && !!metricsUrl,
   });
 
   // Fetch trend data (always 6 months for sparklines)
@@ -236,18 +246,7 @@ export default function Benchmarking() {
             numbers for a KPI of the same name.
           </p>
         </div>
-        <Select value={period} onValueChange={setPeriod}>
-          <SelectTrigger className="w-[180px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PERIOD_OPTIONS.map((o) => (
-              <SelectItem key={o.value} value={o.value}>
-                {o.label}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <DateRangeControl state={periodState} triggerClassName="w-[180px]" testId="benchmarking-range" />
       </div>
 
       {/* Summary banner */}
