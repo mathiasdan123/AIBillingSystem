@@ -338,6 +338,13 @@ export default function SoapNotes() {
     retry: false,
   });
   const isDemoPractice = currentPractice?.isDemo === true;
+  // The "rule-based fallback" checkbox is a QA tool, not something a demo
+  // visitor needs. It shows for platform operators, or when the page is opened
+  // with ?qa=1.
+  const showDemoQaTools =
+    isDemoPractice &&
+    (!!(user as any)?.isPlatformAdmin ||
+      (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('qa') === '1'));
   // Live preview text assembled from streamed SOAP deltas while generating.
   const [streamPreview, setStreamPreview] = useState("");
   const [generatedNote, setGeneratedNote] = useState<{
@@ -2617,7 +2624,7 @@ export default function SoapNotes() {
               </Card>
             )}
 
-            {isDemoPractice && (
+            {showDemoQaTools && (
               <label
                 className="flex items-start gap-2 rounded-md border border-dashed border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900"
                 data-testid="demo-force-fallback"
@@ -2631,7 +2638,7 @@ export default function SoapNotes() {
                 <span>
                   <span className="font-medium">Demo test fixture:</span> generate with the rule-based
                   fallback instead of the AI. This is what every practice gets if the AI is unavailable.
-                  Only shown in the demo practice.
+                  Only shown in the demo practice, to platform operators or with ?qa=1.
                 </span>
               </label>
             )}
