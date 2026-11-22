@@ -10,6 +10,7 @@ const { mockStorage, mockClient, mockPool } = vi.hoisted(() => {
       getPatients: vi.fn(),
       getPatientsByEmail: vi.fn(),
       createPatient: vi.fn(),
+      archivePatient: vi.fn(),
       createAppointment: vi.fn(),
       createClaim: vi.fn(),
       getTherapistsByPractice: vi.fn(),
@@ -158,6 +159,22 @@ describe('ensureDemoPractice', () => {
     // Every realistic seed patient still has a DOB; only the fixture is blank.
     const blank = mockStorage.createPatient.mock.calls.filter((c) => c[0].dateOfBirth == null);
     expect(blank).toHaveLength(1);
+  });
+
+  it('archives the QA fixture patient when it is created so demo visitors do not see it, and archives no one else', async () => {
+    mockStorage.getDemoPractice.mockResolvedValue(undefined);
+    mockStorage.createPractice.mockResolvedValue({ id: 99, isDemo: true });
+    mockStorage.getPatients.mockResolvedValue([]);
+    mockStorage.getPatientsByEmail.mockResolvedValue([]);
+
+    await ensureDemoPractice();
+
+    const fixtureCallIndex = mockStorage.createPatient.mock.calls.findIndex(
+      (c: any[]) => c[0].email === 'riley.nodob@example.com',
+    );
+    const fixtureResult = await mockStorage.createPatient.mock.results[fixtureCallIndex].value;
+    expect(mockStorage.archivePatient).toHaveBeenCalledTimes(1);
+    expect(mockStorage.archivePatient).toHaveBeenCalledWith(fixtureResult.id, 99);
   });
 
   it('adds the blank-DOB fixture to an ALREADY seeded demo practice that lacks it, without reseeding', async () => {
