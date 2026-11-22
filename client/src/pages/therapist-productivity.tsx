@@ -1,5 +1,8 @@
 import { useState, useMemo } from "react";
 import SessionLogCard from "@/components/SessionLogCard";
+import DateRangeControl from "@/components/DateRangeControl";
+import { useDateRange } from "@/hooks/useDateRange";
+import { lastDays, lastMonths, type RangePreset } from "@/lib/dateRange";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -53,12 +56,12 @@ interface TherapistTrend {
 type SortKey = keyof TherapistMetrics;
 type SortDir = "asc" | "desc";
 
-const DATE_PRESETS: Record<string, { label: string; months: number }> = {
-  "1month": { label: "Last 30 Days", months: 1 },
-  "3months": { label: "Last 3 Months", months: 3 },
-  "6months": { label: "Last 6 Months", months: 6 },
-  "12months": { label: "Last 12 Months", months: 12 },
-};
+const DATE_PRESETS: RangePreset[] = [
+  { value: "1month", label: "Last 30 Days", resolve: lastDays(30) },
+  { value: "3months", label: "Last 3 Months", resolve: lastMonths(3) },
+  { value: "6months", label: "Last 6 Months", resolve: lastMonths(6) },
+  { value: "12months", label: "Last 12 Months", resolve: lastMonths(12) },
+];
 
 const COMPARISON_METRICS: Record<string, { key: SortKey; label: string; format: "number" | "currency" | "percent" }> = {
   appointmentsCompleted: { key: "appointmentsCompleted", label: "Appointments Completed", format: "number" },
@@ -88,39 +91,33 @@ export default function TherapistProductivity() {
   const { isAuthenticated } = useAuth();
   const { t } = useTranslation();
 
-  const [datePreset, setDatePreset] = useState("3months");
+  const dateRangeState = useDateRange(DATE_PRESETS, "3months", { limitToToday: true });
+  // Null while custom dates are incomplete or invalid; the queries wait for it.
+  const dateRange = dateRangeState.range;
   const [sortKey, setSortKey] = useState<SortKey>("totalCollected");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [comparisonMetric, setComparisonMetric] = useState("totalCollected");
   const [selectedTherapist, setSelectedTherapist] = useState<string>("all");
   const [trendMetric, setTrendMetric] = useState("appointmentsCompleted");
 
-  const dateRange = useMemo(() => {
-    const months = DATE_PRESETS[datePreset]?.months || 3;
-    const end = new Date();
-    const start = new Date();
-    start.setMonth(start.getMonth() - months);
-    return { start: start.toISOString().split("T")[0], end: end.toISOString().split("T")[0] };
-  }, [datePreset]);
-
   const { data: productivityData = [], isLoading: prodLoading } = useQuery<TherapistMetrics[]>({
-    queryKey: ["/api/analytics/therapist-productivity", dateRange.start, dateRange.end],
+    queryKey: ["/api/analytics/therapist-productivity", dateRange?.start, dateRange?.end],
     queryFn: async () => {
-      const res = await fetch(`/api/analytics/therapist-productivity?start=${dateRange.start}&end=${dateRange.end}`);
+      const res = await fetch(`/api/analytics/therapist-productivity?start=${dateRange!.start}&end=${dateRange!.end}`);
       if (!res.ok) throw new Error("Failed to fetch");
       return res.json();
     },
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !!dateRange,
   });
 
   const { data: trendData = [], isLoading: trendLoading } = useQuery<TherapistTrend[]>({
-    queryKey: ["/api/analytics/therapist-productivity/trends", dateRange.start, dateRange.end],
+    queryKey: ["/api/analytics/therapist-productivity/trends", dateRange?.start, dateRange?.end],
     queryFn: async () => {
-      const res = await fetch(`/api/analytics/therapist-productivity/trends?start=${dateRange.start}&end=${dateRange.end}`);
+      const res = await fetch(`/api/analytics/therapist-productivity/trends?start=${dateRange!.start}&end=${dateRange!.end}`);
       if (!res.ok) throw new Error("Failed to fetch");
       return res.json();
     },
-    enabled: isAuthenticated,
+    enabled: isAuthenticated && !!dateRange,
   });
 
   // Sorted data for the table
@@ -224,7 +221,7 @@ export default function TherapistProductivity() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `therapist-productivity-${dateRange.start}-to-${dateRange.end}.csv`;
+    a.download = `therapist-productivity-${dateRange?.start}-to-${dateRange?.end}.csv`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -250,17 +247,8 @@ export default function TherapistProductivity() {
           <h1 className="text-xl md:text-2xl font-bold text-foreground">{t("therapistProductivity.title")}</h1>
           <p className="text-sm text-muted-foreground">{t("therapistProductivity.subtitle")}</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Select value={datePreset} onValueChange={setDatePreset}>
-            <SelectTrigger className="w-[160px]">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {Object.entries(DATE_PRESETS).map(([key, { label }]) => (
-                <SelectItem key={key} value={key}>{label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <div className="flex flex-wrap items-start gap-2">
+          <DateRangeControl state={dateRangeState} triggerClassName="w-[160px]" testId="productivity-range" />
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={productivityData.length === 0}>
             <Download className="w-4 h-4 mr-1" />
             {t("therapistProductivity.exportCsv")}
@@ -269,7 +257,7 @@ export default function TherapistProductivity() {
       </div>
 
       {/* HR session log (live) */}
-      <SessionLogCard start={dateRange.start} end={dateRange.end} />
+      {dateRange && <SessionLogCard start={dateRange.start} end={dateRange.end} />}
 
       {/* Overview Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">

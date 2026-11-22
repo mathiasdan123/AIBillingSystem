@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import ReportPageLayout from "./ReportPageLayout";
+import { useReportRange } from "@/hooks/useReportRange";
 
 interface PendingPatient {
   id: number;
@@ -25,10 +26,11 @@ const fmtHours = (h: number | null) =>
 const daysSince = (iso: string) => Math.floor((Date.now() - new Date(iso).getTime()) / (1000 * 60 * 60 * 24));
 
 export default function IntakeCompletion() {
+  const { url, control } = useReportRange("/api/reports/intake-completion");
   const { data, isLoading, isError } = useQuery<ReportResponse>({
-    queryKey: ["/api/reports/intake-completion"],
+    queryKey: [url],
     queryFn: async () => {
-      const res = await fetch("/api/reports/intake-completion", { credentials: "include" });
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load report");
       return res.json();
     },
@@ -39,6 +41,7 @@ export default function IntakeCompletion() {
 
   return (
     <ReportPageLayout
+      actions={control}
       title="Intake Completion"
       description="Intake form completion rates and time-to-complete for new patients."
       isLoading={isLoading}

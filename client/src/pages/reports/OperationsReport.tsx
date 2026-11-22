@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import ReportPageLayout from "./ReportPageLayout";
+import { useReportRange } from "@/hooks/useReportRange";
 
 interface Row {
   month: string;
@@ -37,10 +38,11 @@ const fmtUSD = (n: number) =>
   n.toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 
 export default function OperationsReport() {
+  const { url, control } = useReportRange("/api/reports/operations");
   const { data, isLoading, isError } = useQuery<ReportResponse>({
-    queryKey: ["/api/reports/operations"],
+    queryKey: [url],
     queryFn: async () => {
-      const res = await fetch("/api/reports/operations", { credentials: "include" });
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load report");
       return res.json();
     },
@@ -51,6 +53,7 @@ export default function OperationsReport() {
 
   return (
     <ReportPageLayout
+      actions={control}
       title="Operations Report"
       description="Practice-wide rollup: visits, cancellations, new patients, notes, claims, payments — by month."
       isLoading={isLoading}

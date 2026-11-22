@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { parseIsoDate } from "@/lib/dateRange";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -1150,10 +1151,22 @@ export default function CalendarPage() {
           <CardContent className="py-3 md:py-4 px-3 md:px-6">
             <div className="flex flex-col sm:flex-row items-center justify-between gap-2">
               <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto justify-between sm:justify-start">
-                <div className="flex items-center gap-1.5">
+                <div className="flex flex-wrap items-center gap-1.5">
                   <Button variant="outline" size="sm" className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0" onClick={() => view === "month" ? navigateMonth(-1) : view === "week" ? navigateWeek(-1) : navigateDay(-1)}><ChevronLeft className="w-4 h-4" /></Button>
                   <Button variant="outline" size="sm" className="min-h-[44px] min-w-[44px] sm:min-h-0 sm:min-w-0" onClick={() => view === "month" ? navigateMonth(1) : view === "week" ? navigateWeek(1) : navigateDay(1)}><ChevronRight className="w-4 h-4" /></Button>
                   <Button variant="outline" size="sm" className="min-h-[44px] sm:min-h-0" onClick={() => setCurrentDate(new Date())}>Today</Button>
+                  <Input
+                    type="date"
+                    aria-label="Go to date"
+                    title="Go to a specific date"
+                    data-testid="calendar-go-to-date"
+                    className="h-9 w-[9.5rem] min-h-[44px] sm:min-h-0 text-xs"
+                    value={toLocalDateInput(currentDate)}
+                    onChange={(e) => {
+                      const d = parseIsoDate(e.target.value);
+                      if (d) setCurrentDate(d);
+                    }}
+                  />
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 sm:hidden">
                   <Button variant={view === "day" ? "default" : "outline"} size="sm" className="min-h-[44px] text-xs" onClick={() => setView("day")}>Day</Button>

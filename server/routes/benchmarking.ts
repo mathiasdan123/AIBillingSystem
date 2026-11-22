@@ -14,6 +14,7 @@ import { Router } from 'express';
 import { isAuthenticated } from '../replitAuth';
 import { storage } from '../storage';
 import logger from '../services/logger';
+import { parseDateRangeQuery } from '../utils/dateRangeParams';
 import { getDb } from '../db';
 import { users, appointments, claims, treatmentSessions, patients } from '@shared/schema';
 import { eq, and, gte, lte, sql, count } from 'drizzle-orm';
@@ -222,18 +223,35 @@ async function calculateKPIs(practiceId: number, startDate: Date, endDate: Date)
 }
 
 // ---------------------------------------------------------------------------
-// GET /metrics?period=3m — calculated practice KPIs for the given period
+// GET /metrics?period=3m or ?start=&end= — calculated practice KPIs for the given period
 // ---------------------------------------------------------------------------
 
 router.get('/metrics', isAuthenticated, async (req: any, res) => {
   try {
     const practiceId = getAuthorizedPracticeId(req);
-    const months = parsePeriodMonths(req.query.period as string);
-    const endDate = new Date();
-    const startDate = new Date();
-    startDate.setMonth(startDate.getMonth() - months);
 
-    const cacheKey = `practice:${practiceId}:benchmarking:metrics:${months}m`;
+    // Either a chosen calendar range (?start=YYYY-MM-DD&end=YYYY-MM-DD, covering
+    // both whole days in the business time zone) or a preset period (?period=3m).
+    const chosen = parseDateRangeQuery(req.query.start, req.query.end);
+    if (chosen.kind === 'error') {
+      return res.status(400).json({ message: chosen.message });
+    }
+
+    let startDate: Date;
+    let endDate: Date;
+    let cacheKey: string;
+    if (chosen.kind === 'ok') {
+      startDate = chosen.start;
+      endDate = new Date(chosen.endExclusive.getTime() - 1);
+      cacheKey = `practice:${practiceId}:benchmarking:metrics:${chosen.startDate}:${chosen.endDate}`;
+    } else {
+      const months = parsePeriodMonths(req.query.period as string);
+      endDate = new Date();
+      startDate = new Date();
+      startDate.setMonth(startDate.getMonth() - months);
+      cacheKey = `practice:${practiceId}:benchmarking:metrics:${months}m`;
+    }
+
     const data = await cache.wrap(cacheKey, CacheTTL.ANALYTICS, () =>
       calculateKPIs(practiceId, startDate, endDate),
     );

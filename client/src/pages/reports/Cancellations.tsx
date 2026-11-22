@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import ReportPageLayout from "./ReportPageLayout";
+import { useReportRange } from "@/hooks/useReportRange";
 
 interface ByReason {
   reason: string | null;
@@ -28,10 +29,11 @@ interface ReportResponse {
 const fmtPct = (n: number, d: number) => (d > 0 ? `${Math.round((n / d) * 100)}%` : "—");
 
 export default function Cancellations() {
+  const { url, control } = useReportRange("/api/reports/cancellations");
   const { data, isLoading, isError } = useQuery<ReportResponse>({
-    queryKey: ["/api/reports/cancellations"],
+    queryKey: [url],
     queryFn: async () => {
-      const res = await fetch("/api/reports/cancellations", { credentials: "include" });
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load report");
       return res.json();
     },
@@ -44,6 +46,7 @@ export default function Cancellations() {
 
   return (
     <ReportPageLayout
+      actions={control}
       title="Cancellations Report"
       description="Cancellations and no-shows broken down by reason and therapist."
       isLoading={isLoading}

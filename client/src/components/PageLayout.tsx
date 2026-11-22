@@ -43,7 +43,7 @@ export default function PageLayout({
 }: PageLayoutProps) {
   return (
     <div className="p-4 pt-16 pb-20 md:p-6 md:pt-6 md:pb-6">
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div className="min-w-0">
           {backTo && (
             <Link href={backTo.href}>
@@ -57,7 +57,7 @@ export default function PageLayout({
             <p className="text-sm md:text-base text-muted-foreground mt-1">{description}</p>
           )}
         </div>
-        {actions && <div className="flex-shrink-0">{actions}</div>}
+        {actions && <div className="max-w-full">{actions}</div>}
       </div>
 
       {isLoading ? (

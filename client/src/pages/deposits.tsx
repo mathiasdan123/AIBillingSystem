@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -6,6 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import DateRangeControl from "@/components/DateRangeControl";
+import { useDateRange } from "@/hooks/useDateRange";
+import { lastDays, toIsoDate, type DateRange, type RangePreset } from "@/lib/dateRange";
 import {
   Landmark, ShieldCheck, RefreshCw, Loader2, AlertTriangle, CheckCircle2, CircleDollarSign,
 } from "lucide-react";
@@ -57,12 +60,20 @@ const EXCEPTION_LABELS: Record<DepositException["type"], string> = {
 const usd = (cents: number) =>
   (cents / 100).toLocaleString("en-US", { style: "currency", currency: "USD" });
 
-function monthRange(): { from: string; to: string } {
-  const now = new Date();
-  const from = new Date(now.getFullYear(), now.getMonth(), 1);
-  const iso = (d: Date) => d.toISOString().slice(0, 10);
-  return { from: iso(from), to: iso(now) };
-}
+const DEPOSIT_PRESETS: RangePreset[] = [
+  {
+    value: "month",
+    label: "This month",
+    resolve: (today) => ({ start: toIsoDate(new Date(today.getFullYear(), today.getMonth(), 1)), end: toIsoDate(today) }),
+  },
+  { value: "last30", label: "Last 30 days", resolve: lastDays(30) },
+  { value: "last90", label: "Last 90 days", resolve: lastDays(90) },
+  {
+    value: "ytd",
+    label: "Year to date",
+    resolve: (today) => ({ start: toIsoDate(new Date(today.getFullYear(), 0, 1)), end: toIsoDate(today) }),
+  },
+];
 
 async function loadPlaidScript(): Promise<void> {
   if (window.Plaid) return;
@@ -81,13 +92,20 @@ export default function Deposits() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [connecting, setConnecting] = useState(false);
-  const period = monthRange();
+  const rangeState = useDateRange(DEPOSIT_PRESETS, "month", { limitToToday: true });
+  // The statement for the chosen dates; while custom dates are incomplete the
+  // last valid statement stays on screen and the control says what is needed.
+  const lastRange = useRef<DateRange | null>(null);
+  useEffect(() => {
+    if (rangeState.range) lastRange.current = rangeState.range;
+  }, [rangeState.range]);
+  const period = rangeState.range ?? lastRange.current ?? DEPOSIT_PRESETS[0].resolve(new Date());
 
   const { data: banks = [], isLoading: banksLoading } = useQuery<ConnectedBank[]>({
     queryKey: ["/api/reconciliation/items"],
   });
   const { data: statement } = useQuery<Statement>({
-    queryKey: [`/api/reconciliation/statement?from=${period.from}&to=${period.to}`],
+    queryKey: [`/api/reconciliation/statement?from=${period.start}&to=${period.end}`],
   });
   const { data: exceptions = [] } = useQuery<DepositException[]>({
     queryKey: ["/api/reconciliation/exceptions"],
@@ -95,7 +113,7 @@ export default function Deposits() {
 
   const refreshAll = () => {
     queryClient.invalidateQueries({ queryKey: ["/api/reconciliation/items"] });
-    queryClient.invalidateQueries({ queryKey: [`/api/reconciliation/statement?from=${period.from}&to=${period.to}`] });
+    queryClient.invalidateQueries({ queryKey: [`/api/reconciliation/statement?from=${period.start}&to=${period.end}`] });
     queryClient.invalidateQueries({ queryKey: ["/api/reconciliation/exceptions"] });
   };
 
@@ -162,7 +180,8 @@ export default function Deposits() {
             Verify that every insurance payment actually arrives in your bank account.
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-start gap-2">
+          <DateRangeControl state={rangeState} testId="deposits-range" />
           <Button variant="outline" onClick={() => runMatching.mutate()} disabled={runMatching.isPending}>
             {runMatching.isPending ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <RefreshCw className="h-4 w-4 mr-2" />}
             Run matching
@@ -177,7 +196,7 @@ export default function Deposits() {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="pb-2">
-            <CardDescription>Remitted this month</CardDescription>
+            <CardDescription>Remitted in this period</CardDescription>
             <CardTitle className="text-2xl tabular-nums">{usd(statement?.remittedCents ?? 0)}</CardTitle>
           </CardHeader>
           <CardContent className="text-xs text-muted-foreground">What payers say they paid</CardContent>
@@ -250,7 +269,7 @@ export default function Deposits() {
             <CardTitle className="flex items-center gap-2 text-base">
               <CircleDollarSign className="h-4 w-4" /> Awaiting deposit
             </CardTitle>
-            <CardDescription>Remittances not yet confirmed in the bank account this month.</CardDescription>
+            <CardDescription>Remittances not yet confirmed in the bank account in this period.</CardDescription>
           </CardHeader>
           <CardContent>
             <ul className="divide-y">

@@ -2,16 +2,18 @@ import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import ReportPageLayout from "./ReportPageLayout";
+import { useReportRange } from "@/hooks/useReportRange";
 
 interface ByMonth { month: string | null; count: number; }
 interface BySource { sourceName: string; sourceType: string | null; count: number; }
 interface ReportResponse { start: string; end: string; byMonth: ByMonth[]; bySource: BySource[]; }
 
 export default function ReferralsByMonth() {
+  const { url, control } = useReportRange("/api/reports/referrals");
   const { data, isLoading, isError } = useQuery<ReportResponse>({
-    queryKey: ["/api/reports/referrals"],
+    queryKey: [url],
     queryFn: async () => {
-      const res = await fetch("/api/reports/referrals", { credentials: "include" });
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load report");
       return res.json();
     },
@@ -23,6 +25,7 @@ export default function ReferralsByMonth() {
 
   return (
     <ReportPageLayout
+      actions={control}
       title="Referrals by Month"
       description="Incoming referral volume broken down by month and source."
       isLoading={isLoading}

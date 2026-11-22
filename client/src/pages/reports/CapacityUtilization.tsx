@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
 import ReportPageLayout from "./ReportPageLayout";
+import { useReportRange } from "@/hooks/useReportRange";
 
 interface Row {
   therapistId: string | null;
@@ -24,10 +25,11 @@ const fmtHrs = (n: number) => `${n.toFixed(1)}h`;
 const fmtPct = (n: number | null) => (n == null ? "—" : `${Math.round(n * 100)}%`);
 
 export default function CapacityUtilization() {
+  const { url, control } = useReportRange("/api/reports/capacity-utilization");
   const { data, isLoading, isError } = useQuery<ReportResponse>({
-    queryKey: ["/api/reports/capacity-utilization"],
+    queryKey: [url],
     queryFn: async () => {
-      const res = await fetch("/api/reports/capacity-utilization", { credentials: "include" });
+      const res = await fetch(url, { credentials: "include" });
       if (!res.ok) throw new Error("Failed to load report");
       return res.json();
     },
@@ -40,6 +42,7 @@ export default function CapacityUtilization() {
 
   return (
     <ReportPageLayout
+      actions={control}
       title="Capacity Utilization"
       description="Booked vs available hours per therapist. Available hours come from each therapist's weekly availability windows."
       isLoading={isLoading}
